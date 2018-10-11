@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -25,22 +25,20 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
+
 package org.jruby.ext.socket;
 
 import jnr.constants.platform.Sock;
 import org.jruby.Ruby;
-import org.jruby.RubyArray;
 import org.jruby.RubyClass;
 import org.jruby.RubyFixnum;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
-import org.jruby.ast.util.ArgsUtil;
 import org.jruby.common.IRubyWarnings;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.io.ChannelFD;
-import org.jruby.util.io.ModeFlags;
 import org.jruby.util.io.Sockaddr;
 
 import java.io.IOException;
@@ -96,17 +94,7 @@ public class RubyServerSocket extends RubySocket {
 
     @JRubyMethod()
     public IRubyObject bind(ThreadContext context, IRubyObject addr) {
-        final InetSocketAddress iaddr;
-
-        if (addr instanceof Addrinfo) {
-            Addrinfo addrInfo = (Addrinfo) addr;
-            iaddr = new InetSocketAddress(addrInfo.getInetAddress().getHostAddress(), addrInfo.getPort());
-        } else {
-            iaddr = Sockaddr.addressFromSockaddr_in(context, addr);
-        }
-
-        doBind(context, getChannel(), iaddr, 0);
-        return RubyFixnum.zero(context.runtime);
+        return bind(context, addr, RubyFixnum.zero(context.runtime));
     }
 
     @JRubyMethod()
@@ -115,6 +103,9 @@ public class RubyServerSocket extends RubySocket {
 
         if (addr instanceof Addrinfo) {
             Addrinfo addrInfo = (Addrinfo) addr;
+            if (!addrInfo.ip_p(context).isTrue()) {
+                throw context.runtime.newTypeError("not an INET or INET6 address: " + addrInfo);
+            }
             iaddr = new InetSocketAddress(addrInfo.getInetAddress().getHostAddress(), addrInfo.getPort());
         } else {
             iaddr = Sockaddr.addressFromSockaddr_in(context, addr);
@@ -126,7 +117,7 @@ public class RubyServerSocket extends RubySocket {
 
     @JRubyMethod()
     public IRubyObject accept(ThreadContext context) {
-        return doAccept(context, getChannel(), true);
+        return doAccept(this, context, true);
     }
 
     @JRubyMethod()
@@ -136,9 +127,10 @@ public class RubyServerSocket extends RubySocket {
 
     @JRubyMethod()
     public IRubyObject accept_nonblock(ThreadContext context, IRubyObject opts) {
-        return doAcceptNonblock(context, getChannel(), ArgsUtil.extractKeywordArg(context, "exception", opts) != context.runtime.getFalse());
+        return doAcceptNonblock(this, context, extractExceptionArg(context, opts));
     }
 
+    @Override
     protected ChannelFD initChannelFD(Ruby runtime) {
         Channel channel;
 
@@ -157,8 +149,9 @@ public class RubyServerSocket extends RubySocket {
         }
     }
 
-    private IRubyObject doAcceptNonblock(ThreadContext context, Channel channel, boolean ex) {
+    public static IRubyObject doAcceptNonblock(RubySocket sock, ThreadContext context, boolean ex) {
         try {
+            Channel channel = sock.getChannel();
             if (channel instanceof SelectableChannel) {
                 SelectableChannel selectable = (SelectableChannel)channel;
 
@@ -168,7 +161,7 @@ public class RubyServerSocket extends RubySocket {
                     try {
                         selectable.configureBlocking(false);
 
-                        IRubyObject socket = doAccept(context, channel, ex);
+                        IRubyObject socket = doAccept(sock, context, ex);
                         if (!(socket instanceof RubySocket)) return socket;
                         SocketChannel socketChannel = (SocketChannel)((RubySocket)socket).getChannel();
                         InetSocketAddress addr = (InetSocketAddress)socketChannel.socket().getRemoteSocketAddress();
@@ -190,12 +183,14 @@ public class RubyServerSocket extends RubySocket {
         }
     }
 
-    private IRubyObject doAccept(ThreadContext context, Channel channel, boolean ex) {
+    public static IRubyObject doAccept(RubySocket sock, ThreadContext context, boolean ex) {
         Ruby runtime = context.runtime;
+
+        Channel channel = sock.getChannel();
 
         try {
             if (channel instanceof ServerSocketChannel) {
-                ServerSocketChannel serverChannel = (ServerSocketChannel)getChannel();
+                ServerSocketChannel serverChannel = (ServerSocketChannel)sock.getChannel();
 
                 SocketChannel socket = serverChannel.accept();
 
@@ -208,9 +203,9 @@ public class RubyServerSocket extends RubySocket {
                 }
 
                 RubySocket rubySocket = new RubySocket(runtime, runtime.getClass("Socket"));
-                rubySocket.initFromServer(runtime, this, socket);
+                rubySocket.initFromServer(runtime, sock, socket);
 
-                return rubySocket;
+                return runtime.newArray(rubySocket, new Addrinfo(runtime, runtime.getClass("Addrinfo"), socket.getRemoteAddress()));
             }
             throw runtime.newErrnoENOPROTOOPTError();
         }

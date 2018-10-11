@@ -2,7 +2,6 @@ package org.jruby.ir.representations;
 
 import org.jruby.dirgra.DirectedGraph;
 import org.jruby.dirgra.Edge;
-import org.jruby.ir.IRClosure;
 import org.jruby.ir.IRManager;
 import org.jruby.ir.IRScope;
 import org.jruby.ir.Operation;
@@ -282,11 +281,14 @@ public class CFG {
             } else if (iop.endsBasicBlock()) {
                 bbEnded = true;
                 currBB.addInstr(i);
-                Label tgt;
+                Label tgt = null;
                 nextBBIsFallThrough = false;
                 if (i instanceof BranchInstr) {
                     tgt = ((BranchInstr) i).getJumpTarget();
                     nextBBIsFallThrough = true;
+                } else if (i instanceof MultiBranchInstr) {
+                    Label[] tgts = ((MultiBranchInstr) i).getJumpTargets();
+                    for (Label l : tgts) addEdge(currBB, l, forwardRefs);
                 } else if (i instanceof JumpInstr) {
                     tgt = ((JumpInstr) i).getJumpTarget();
                 } else if (iop.isReturn()) { // BREAK, RETURN, CLOSURE_RETURN
@@ -315,11 +317,14 @@ public class CFG {
                 // Mark the BB as a rescue entry BB
                 firstRescueBB.markRescueEntryBB();
 
-                // Record a mapping from the region's exclusive basic blocks to the first bb that will start exception handling for all their exceptions.
-                // Add an exception edge from every exclusive bb of the region to firstRescueBB
+                // Record a mapping from the region's exclusive basic blocks to the first bb that will start exception
+                // handling for all their exceptions. Add an exception edge from every exclusive bb of the region to
+                // firstRescueBB unless it is incapable of raising.
                 for (BasicBlock b: rr.getExclusiveBBs()) {
-                    setRescuerBB(b, firstRescueBB);
-                    graph.addEdge(b, firstRescueBB, EdgeType.EXCEPTION);
+                    if (b.canRaiseExceptions()) {
+                        setRescuerBB(b, firstRescueBB);
+                        graph.addEdge(b, firstRescueBB, EdgeType.EXCEPTION);
+                    }
                 }
             }
         }
@@ -415,22 +420,32 @@ public class CFG {
         // System.out.println("\nGraph:\n" + toStringGraph());
         // System.out.println("\nInstructions:\n" + toStringInstrs());
 
-        // FIXME: Quick and dirty implementation
-        while (true) {
-            BasicBlock bbToRemove = null;
-            for (BasicBlock b : graph.allData()) {
-                if (b == entryBB) continue; // Skip entry bb!
+        Queue<BasicBlock> worklist = new LinkedList();
+        Set<BasicBlock> living = new HashSet();
+        worklist.add(entryBB);
+        living.add(entryBB);
 
-                // Every other bb should have at least one incoming edge
-                if (graph.findVertexFor(b).getIncomingEdges().isEmpty()) {
-                    bbToRemove = b;
-                    break;
+        while (!worklist.isEmpty()) {
+            BasicBlock current = worklist.remove();
+
+            for (BasicBlock bb: graph.findVertexFor(current).getOutgoingDestinationsData()) {
+                if (!living.contains(bb)) {
+                    worklist.add(bb);
+                    living.add(bb);
                 }
             }
-            if (bbToRemove == null) break;
+        }
 
-            removeBB(bbToRemove);
-            removeNestedScopesFromBB(bbToRemove);
+        // Seems like Java should have simpler way of doing this.
+        // We canot just remove in this loop or we get concmodexc.
+        Set<BasicBlock> dead = new HashSet();
+        for (BasicBlock bb: graph.allData()) {
+            if (!living.contains(bb)) dead.add(bb);
+        }
+
+        for (BasicBlock bb: dead) {
+            removeBB(bb);
+            removeNestedScopesFromBB(bb);
         }
     }
 
@@ -458,6 +473,19 @@ public class CFG {
             removeEdge(a, b);
             for (Edge<BasicBlock> e : getOutgoingEdges(b)) {
                 addEdge(a, e.getDestination().getData(), e.getType());
+            }
+
+            // Move all incoming edges of b to be incoming edges of a.
+            for (Edge<BasicBlock> e : getIncomingEdges(b)) {
+                BasicBlock fixupBB = e.getSource().getData();
+                removeEdge(fixupBB, b);
+                addEdge(fixupBB, a, e.getType());
+
+                // a -fall-through->b handled above. Any jumps to b must be pointed to a's label.
+                Instr fixupLastInstr = fixupBB.getLastInstr();
+                if (fixupLastInstr instanceof JumpTargetInstr) {
+                    ((JumpTargetInstr) fixupLastInstr).setJumpTarget(a.getLabel());
+                }
             }
 
             // Delete bb
@@ -511,7 +539,11 @@ public class CFG {
             if (!mergedBBs.contains(b) && outDegree(b) == 1) {
                 for (Edge<BasicBlock> e : getOutgoingEdges(b)) {
                     BasicBlock outB = e.getDestination().getData();
-                    if (e.getType() != EdgeType.EXCEPTION && inDegree(outB) == 1 && mergeBBs(b, outB)) {
+
+                    // 1:1 BBs can just be one since there is only one place to go.  An empty entering any BB can merge
+                    // since the empty one does nothing (Note: mergeBBs uses empty as destination impl-wise but outcome
+                    // is the same).
+                    if (e.getType() != EdgeType.EXCEPTION && (inDegree(outB) == 1 || b.isEmpty()) && mergeBBs(b, outB)) {
                         mergedBBs.add(outB);
                     }
                 }
@@ -572,35 +604,6 @@ public class CFG {
         }
         for (Edge<BasicBlock> edge: toRemove) {
             graph.removeEdge(edge);
-        }
-
-        // SSS FIXME: Can't we not add some of these exception edges in the first place??
-        // Remove exception edges from blocks that couldn't possibly thrown an exception!
-        toRemove = new ArrayList<>();
-        for (BasicBlock b : graph.allData()) {
-            boolean noExceptions = true;
-            for (Instr i : b.getInstrs()) {
-                if (i.canRaiseException()) {
-                    noExceptions = false;
-                    break;
-                }
-            }
-
-            if (noExceptions) {
-                for (Edge<BasicBlock> e : graph.findVertexFor(b).getOutgoingEdgesOfType(EdgeType.EXCEPTION)) {
-                    BasicBlock source = e.getSource().getData();
-                    BasicBlock destination = e.getDestination().getData();
-                    toRemove.add(e);
-
-                    if (rescuerMap.get(source) == destination) rescuerMap.remove(source);
-                }
-            }
-        }
-
-        if (!toRemove.isEmpty()) {
-            for (Edge<BasicBlock> edge: toRemove) {
-                graph.removeEdge(edge);
-            }
         }
 
         deleteOrphanedBlocks(graph);

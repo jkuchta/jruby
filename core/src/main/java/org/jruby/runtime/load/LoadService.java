@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -31,6 +31,7 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
+
 package org.jruby.runtime.load;
 
 import java.io.File;
@@ -50,6 +51,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.zip.ZipException;
 
 import org.jruby.Ruby;
@@ -58,6 +60,7 @@ import org.jruby.RubyContinuation;
 import org.jruby.RubyFile;
 import org.jruby.RubyHash;
 import org.jruby.RubyInstanceConfig;
+import org.jruby.RubyKernel;
 import org.jruby.RubyString;
 import org.jruby.ast.executable.Script;
 import org.jruby.exceptions.JumpException;
@@ -67,6 +70,7 @@ import org.jruby.exceptions.Unrescuable;
 import org.jruby.ext.rbconfig.RbConfigLibrary;
 import org.jruby.platform.Platform;
 import org.jruby.runtime.Helpers;
+import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.FileResource;
 import org.jruby.util.JRubyFile;
@@ -180,10 +184,10 @@ public class LoadService {
     protected RubyArray loadPath;
     protected StringArraySet loadedFeatures;
     protected RubyArray loadedFeaturesDup;
-    private final Map<String, String> loadedFeaturesIndex = new ConcurrentHashMap<String, String>();
-    protected final Map<String, Library> builtinLibraries = new HashMap<String, Library>();
+    private final Map<String, String> loadedFeaturesIndex = new ConcurrentHashMap<>(64);
+    protected final Map<String, Library> builtinLibraries = new HashMap<>(36);
 
-    protected final Map<String, JarFile> jarFiles = new HashMap<String, JarFile>();
+    protected final Map<String, JarFile> jarFiles = new HashMap<>();
 
     protected final Ruby runtime;
     protected final LibrarySearcher librarySearcher;
@@ -220,8 +224,9 @@ public class LoadService {
         // add $RUBYLIB paths
         RubyHash env = (RubyHash) runtime.getObject().getConstant("ENV");
         RubyString env_rubylib = runtime.newString("RUBYLIB");
-        if (env.has_key_p(env_rubylib).isTrue()) {
-            String rubylib = env.op_aref(runtime.getCurrentContext(), env_rubylib).toString();
+        ThreadContext currentContext = runtime.getCurrentContext();
+        if (env.has_key_p(currentContext, env_rubylib).isTrue()) {
+            String rubylib = env.op_aref(currentContext, env_rubylib).toString();
             String[] paths = rubylib.split(File.pathSeparator);
             addPaths(paths);
         }
@@ -317,6 +322,7 @@ public class LoadService {
 
     public void load(String file, boolean wrap) {
         long startTime = loadTimer.startLoad(file);
+        int currentLine = runtime.getCurrentLine();
         try {
             if(!runtime.getProfile().allowLoad(file)) {
                 throw runtime.newLoadError("no such file to load -- " + file, file);
@@ -343,12 +349,14 @@ public class LoadService {
                 throw newLoadErrorFromThrowable(runtime, file, e);
             }
         } finally {
+            runtime.setCurrentLine(currentLine);
             loadTimer.endLoad(file, startTime);
         }
     }
 
     public void loadFromClassLoader(ClassLoader classLoader, String file, boolean wrap) {
         long startTime = loadTimer.startLoad("classloader:" + file);
+        int currentLine = runtime.getCurrentLine();
         try {
             SearchState state = new SearchState(file);
             state.prepareLoadSearch(file);
@@ -369,6 +377,7 @@ public class LoadService {
                 throw newLoadErrorFromThrowable(runtime, file, e);
             }
         } finally {
+            runtime.setCurrentLine(currentLine);
             loadTimer.endLoad("classloader:" + file, startTime);
         }
     }
@@ -393,46 +402,22 @@ public class LoadService {
     }
 
     public boolean require(String requireName) {
-        return requireCommon(requireName, true) == RequireState.LOADED;
+        return smartLoadInternal(requireName, true) == RequireState.LOADED;
     }
 
     public boolean autoloadRequire(String requireName) {
-        return requireCommon(requireName, false) != RequireState.CIRCULAR;
+        return smartLoadInternal(requireName, false) != RequireState.CIRCULAR;
     }
 
     private enum RequireState {
         LOADED, ALREADY_LOADED, CIRCULAR
     }
 
-    private RequireState requireCommon(String file, boolean circularRequireWarning) {
-        checkEmptyLoad(file);
-
-        // check with short name
-        if (featureAlreadyLoaded(file)) {
-            return RequireState.ALREADY_LOADED;
-        }
-
-        SearchState state = findFileForLoad(file);
-
-        if (state.library == null) {
-            throw runtime.newLoadError("no such file to load -- " + state.searchFile, state.searchFile);
-        }
-
-        // check with long name
-        if (featureAlreadyLoaded(state.loadName)) {
-            return RequireState.ALREADY_LOADED;
-        }
-
-        if (!runtime.getProfile().allowRequire(file)) {
-            throw runtime.newLoadError("no such file to load -- " + file, file);
-        }
-
-        return smartLoadInternal(file, circularRequireWarning);
-    }
-
     private final RequireLocks requireLocks = new RequireLocks();
 
-    private static final class RequireLocks {
+    enum LockResult { LOCKED, CIRCULAR }
+
+    private final class RequireLocks {
         private final ConcurrentHashMap<String, ReentrantLock> pool;
         // global lock for require must be fair
         //private final ReentrantLock globalLock;
@@ -452,7 +437,7 @@ public class LoadService {
          * @return If the sync object already locked by current thread, it just
          *         returns false without getting a lock. Otherwise true.
          */
-        private boolean lock(String requireName) {
+        private LockResult lock(String requireName) {
             ReentrantLock lock = pool.get(requireName);
 
             if (lock == null) {
@@ -461,9 +446,17 @@ public class LoadService {
                 if (lock == null) lock = newLock;
             }
 
-            if (lock.isHeldByCurrentThread()) return false;
+            if (lock.isHeldByCurrentThread()) return LockResult.CIRCULAR;
 
-            return lock.tryLock();
+            try {
+                runtime.getCurrentContext().getThread().enterSleep();
+                lock.lock();
+            } finally {
+                runtime.getCurrentContext().getThread().exitSleep();
+            }
+
+
+            return LockResult.LOCKED;
         }
 
         /**
@@ -483,12 +476,10 @@ public class LoadService {
     }
 
     protected void warnCircularRequire(String requireName) {
-        StringBuilder sb = new StringBuilder();
+        StringBuilder sb = new StringBuilder("loading in progress, circular require considered harmful - " + requireName);
 
         runtime.getCurrentContext().renderCurrentBacktrace(sb);
-
-        runtime.getWarnings().warn("loading in progress, circular require considered harmful - " + requireName);
-        runtime.getErr().print(sb.toString());
+        runtime.getWarnings().warn(sb.toString());
     }
 
     /**
@@ -519,7 +510,11 @@ public class LoadService {
             return RequireState.ALREADY_LOADED;
         }
 
-        if (!requireLocks.lock(state.loadName)) {
+        if (!runtime.getProfile().allowRequire(file)) {
+            throw runtime.newLoadError("no such file to load -- " + file, file);
+        }
+
+        if (requireLocks.lock(state.loadName) == LockResult.CIRCULAR) {
             if (circularRequireWarning && runtime.isVerbose()) {
                 warnCircularRequire(state.loadName);
             }
@@ -637,6 +632,13 @@ public class LoadService {
 
     public void removeBuiltinLibrary(String name) {
         builtinLibraries.remove(name);
+    }
+
+    /**
+     * Get a list of all libraries JRuby considers "built-in".
+     */
+    public List<String> getBuiltinLibraries() {
+        return builtinLibraries.keySet().stream().collect(Collectors.toList());
     }
 
     public void removeInternalLoadedFeature(String name) {
@@ -1058,7 +1060,7 @@ public class LoadService {
 //            if (runtime.getInstanceConfig().isCextEnabled()) {
 //                return new CExtension(resource);
 //            } else {
-//                throw runtime.newLoadError("C extensions are disabled, can't load `" + resource.getName() + "'", resource.getName());
+//                throw runtime.newLoadError("C extensions are disabled, can't load `" + resource.getId() + "'", resource.getId());
 //            }
             throw runtime.newLoadError("C extensions are disabled, can't load `" + resource.getName() + "'", resource.getName());
         } else if (file.endsWith(".jar")) {
@@ -1251,7 +1253,7 @@ public class LoadService {
         }
 
         Outer: for (int i = 0; i < loadPath.size(); i++) {
-            // TODO this is really inefficient, and potentially a problem everytime anyone require's something.
+            // TODO this is really inefficient, and potentially a problem every time anyone require's something.
             // we should try to make LoadPath a special array object.
             String loadPathEntry = getLoadPathEntry(loadPath.eltInternal(i));
 
@@ -1490,7 +1492,7 @@ public class LoadService {
         }
 
         for (int i = 0; i < loadPath.size(); i++) {
-            // TODO this is really inefficient, and potentially a problem everytime anyone require's something.
+            // TODO this is really inefficient, and potentially a problem every time anyone require's something.
             // we should try to make LoadPath a special array object.
             String entry = getLoadPathEntry(loadPath.eltInternal(i));
 

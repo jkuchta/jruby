@@ -10,19 +10,16 @@ import org.jruby.javasupport.JavaMethod;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.util.ArraySupport;
 
 public final class StaticMethodInvoker extends MethodInvoker {
 
-    public StaticMethodInvoker(RubyClass host, List<Method> methods) {
-        super(host, methods);
+    public StaticMethodInvoker(RubyClass host, List<Method> methods, String name) {
+        super(host, methods, name);
     }
 
-    public StaticMethodInvoker(RubyClass host, Method method) {
-        super(host, method);
-    }
-
-    public StaticMethodInvoker(RubyModule host, Method method) {
-        super(host, method);
+    public StaticMethodInvoker(RubyModule host, Method method, String name) {
+        super(host, method, name);
     }
 
     @Override
@@ -76,17 +73,16 @@ public final class StaticMethodInvoker extends MethodInvoker {
     @Override
     public IRubyObject call(ThreadContext context, IRubyObject self, RubyModule clazz, String name, IRubyObject[] args, Block block) {
         if (block.isGiven()) {
-            int len = args.length;
+            final int len = args.length;
             // too much array creation!
-            Object[] convertedArgs = new Object[len + 1];
-            IRubyObject[] intermediate = new IRubyObject[len + 1];
-            System.arraycopy(args, 0, intermediate, 0, len);
-            intermediate[len] = RubyProc.newProc(context.runtime, block, block.type);
+            IRubyObject[] newArgs = ArraySupport.newCopy(args, RubyProc.newProc(context.runtime, block, block.type));
 
-            JavaMethod method = (JavaMethod) findCallable(self, name, intermediate, len + 1);
+            JavaMethod method = (JavaMethod) findCallable(self, name, newArgs, len + 1);
             final Class<?>[] paramTypes = method.getParameterTypes();
+
+            Object[] convertedArgs = new Object[len + 1];
             for (int i = 0; i < len + 1; i++) {
-                convertedArgs[i] = intermediate[i].toJava(paramTypes[i]);
+                convertedArgs[i] = newArgs[i].toJava(paramTypes[i]);
             }
 
             return method.invokeStaticDirect(context, convertedArgs);

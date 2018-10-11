@@ -24,9 +24,6 @@ def load_build_properties_into_constants
 end
 load_build_properties_into_constants
 
-# def ant(*args)
-#   raise 'running ant failed!' unless system "ant -logger org.apache.tools.ant.NoBannerLogger #{args.join(' ')}"
-# end
 require 'digest'
 
 class HashTask < Struct.new(:hash, :file)
@@ -62,10 +59,15 @@ def sha256_checksum(filename)
   HashTask.hash_for(filename, Digest::SHA256)
 end
 
+def sha512_checksum(filename)
+  HashTask.hash_for(filename, Digest::SHA512)
+end
+
 def checksums(filename)
   md5_checksum filename
   sha1_checksum filename
   sha256_checksum filename
+  sha512_checksum filename
 end
 
 def permute_tests(base_name, options, *prereqs, &block)

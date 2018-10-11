@@ -57,8 +57,14 @@ class TestJavaExtension < Test::Unit::TestCase
       [ java.lang.Short.new(1), java.lang.Integer.new(0) ].sort!
     rescue => e
       assert_instance_of TypeError, e
-      assert 'java.lang.Short cannot be cast to java.lang.Integer' == e.message ||
-                 'java.lang.Integer cannot be cast to java.lang.Short' == e.message
+      msg = 'java.lang.Short cannot be cast to java.lang.Integer'
+      unless msg.eql? e.message
+        msg = 'java.lang.Integer cannot be cast to java.lang.Short'
+        unless msg.eql? e.message
+          # IBM Java: #<TypeError: java.lang.Integer incompatible with java.lang.Short>
+          assert_match(/java.lang.Integer.*java.lang.Short/, e.message)
+        end
+      end
     end
   end
 
@@ -176,8 +182,13 @@ class TestJavaExtension < Test::Unit::TestCase
 
     assert_equal 'Java::JavaLang::Thread::State', Java::java.lang.Thread::State.name
     # an enum class with custom code for each constant :
-    assert_equal 'Java::JavaUtilConcurrent::TimeUnit::1', java.util.concurrent.TimeUnit::NANOSECONDS.class.name
-    assert_equal 'Java::JavaUtilConcurrent::TimeUnit::2', java.util.concurrent.TimeUnit::MICROSECONDS.class.name
+    if JAVA_9 # since Java 9 the synthetic class name seems to get hidden away
+      assert_equal 'Java::JavaUtilConcurrent::TimeUnit', java.util.concurrent.TimeUnit::NANOSECONDS.class.name
+      assert_equal 'Java::JavaUtilConcurrent::TimeUnit', java.util.concurrent.TimeUnit::MICROSECONDS.class.name
+    else
+      assert_equal 'Java::JavaUtilConcurrent::TimeUnit::1', java.util.concurrent.TimeUnit::NANOSECONDS.class.name
+      assert_equal 'Java::JavaUtilConcurrent::TimeUnit::2', java.util.concurrent.TimeUnit::MICROSECONDS.class.name
+    end
     assert java.util.concurrent.TimeUnit::MICROSECONDS.is_a?(java.util.concurrent.TimeUnit)
   end
 

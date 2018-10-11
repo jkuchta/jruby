@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -28,6 +28,7 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
+
 package org.jruby.runtime;
 
 import java.io.Serializable;
@@ -36,6 +37,7 @@ import java.util.Map;
 import org.jruby.Ruby;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.util.ArraySupport;
 
 /**
  * The arity of a method is the number of arguments it takes.
@@ -291,13 +293,10 @@ public final class Arity implements Serializable {
     /**
      */
     public static IRubyObject[] scanArgs(Ruby runtime, IRubyObject[] args, int required, int optional) {
-        int total = required+optional;
-        int real = checkArgumentCount(runtime, args,required,total);
-        IRubyObject[] narr = new IRubyObject[total];
-        System.arraycopy(args,0,narr,0,real);
-        for(int i=real; i<total; i++) {
-            narr[i] = runtime.getNil();
-        }
-        return narr;
+        final int total = required + optional;
+        int len = checkArgumentCount(runtime, args, required, total);
+        args = ArraySupport.newCopy(args, total);
+        for (int i=len; i<total; i++) args[i] = runtime.getNil();
+        return args;
     }
 }

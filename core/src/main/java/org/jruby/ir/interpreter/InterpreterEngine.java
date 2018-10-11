@@ -22,7 +22,6 @@ import org.jruby.ir.instructions.ReceivePreReqdArgInstr;
 import org.jruby.ir.instructions.RestoreBindingVisibilityInstr;
 import org.jruby.ir.instructions.ResultInstr;
 import org.jruby.ir.instructions.ReturnBase;
-import org.jruby.ir.instructions.ReturnOrRethrowSavedExcInstr;
 import org.jruby.ir.instructions.RuntimeHelperCall;
 import org.jruby.ir.instructions.SaveBindingVisibilityInstr;
 import org.jruby.ir.instructions.SearchConstInstr;
@@ -58,6 +57,7 @@ import org.jruby.ir.operands.Variable;
 import org.jruby.ir.runtime.IRRuntimeHelpers;
 import org.jruby.parser.StaticScope;
 import org.jruby.runtime.Block;
+import org.jruby.runtime.CallSite;
 import org.jruby.runtime.DynamicScope;
 import org.jruby.runtime.Frame;
 import org.jruby.runtime.Helpers;
@@ -117,7 +117,7 @@ public class InterpreterEngine {
 
         // Blocks with explicit call protocol shouldn't do this before args are prepared
         if (acceptsKeywordArgument && (block == null || !interpreterContext.hasExplicitCallProtocol())) {
-            IRRuntimeHelpers.frobnicateKwargsArgument(context, args, interpreterContext.getRequiredArgsCount());
+            args = IRRuntimeHelpers.frobnicateKwargsArgument(context, args, interpreterContext.getRequiredArgsCount());
         }
 
         StaticScope currScope = interpreterContext.getStaticScope();
@@ -204,7 +204,8 @@ public class InterpreterEngine {
             } catch (Throwable t) {
                 if (debug) extractToMethodToAvoidC2Crash(instr, t);
 
-                ipc = instr.getRPC();
+                // StartupInterpreterEngine never calls this method so we know it is a full build.
+                ipc = ((FullInterpreterContext) interpreterContext).determineRPC(ipc);
 
                 if (debug) {
                     Interpreter.LOG.info("in : " + interpreterContext.getScope() + ", caught Java throwable: " + t + "; excepting instr: " + instr);
@@ -325,11 +326,15 @@ public class InterpreterEngine {
                 break;
             }
             case CALL_1OB: {
+                // NOTE: This logic shouod always match OneOperandArgBlockCallInstr
                 OneOperandArgBlockCallInstr call = (OneOperandArgBlockCallInstr)instr;
                 IRubyObject r = (IRubyObject)retrieveOp(call.getReceiver(), context, self, currDynScope, currScope, temp);
                 IRubyObject o = (IRubyObject)call.getArg1().retrieve(context, self, currScope, currDynScope, temp);
                 Block preparedBlock = call.prepareBlock(context, self, currScope, currDynScope, temp);
-                result = call.getCallSite().call(context, self, r, o, preparedBlock);
+                CallSite callSite = call.getCallSite();
+                result = call.hasLiteralClosure() ?
+                        callSite.callIter(context, self, r, o, preparedBlock) :
+                        callSite.call(context, self, r, o, preparedBlock);
                 setResult(temp, currDynScope, call.getResult(), result);
                 break;
             }
@@ -383,8 +388,14 @@ public class InterpreterEngine {
                 // Everything else is PUBLIC by default.
                 context.setCurrentVisibility(Visibility.PUBLIC);
                 break;
+            case PUSH_BACKREF_FRAME:
+                context.preBackrefMethod();
+                break;
             case POP_METHOD_FRAME:
                 context.popFrame();
+                break;
+            case POP_BACKREF_FRAME:
+                context.postBackrefMethod();
                 break;
             case POP_BINDING:
                 context.popScope();
@@ -394,7 +405,7 @@ public class InterpreterEngine {
                 context.callThreadPoll();
                 break;
             case CHECK_ARITY:
-                ((CheckArityInstr) instr).checkArity(context, currScope, args, block == null ? null : block.type);
+                ((CheckArityInstr) instr).checkArity(context, currScope, args, block);
                 break;
             case LINE_NUM:
                 context.setLine(((LineNumberInstr)instr).lineNumber);
@@ -419,7 +430,6 @@ public class InterpreterEngine {
     protected static IRubyObject processReturnOp(ThreadContext context, Block block, Instr instr, Operation operation,
                                                  DynamicScope currDynScope, Object[] temp, IRubyObject self,
                                                  StaticScope currScope) {
-        Block.Type blockType = block == null ? null : block.type;
         switch(operation) {
             // --------- Return flavored instructions --------
             case RETURN: {
@@ -433,12 +443,12 @@ public class InterpreterEngine {
                 // This assumes that scopes with break instr. have a frame / dynamic scope
                 // pushed so that we can get to its static scope. For-loops now always have
                 // a dyn-scope pushed onto stack which makes this work in all scenarios.
-                return IRRuntimeHelpers.initiateBreak(context, currDynScope, rv, blockType);
+                return IRRuntimeHelpers.initiateBreak(context, currDynScope, rv, block);
             }
             case NONLOCAL_RETURN: {
                 NonlocalReturnInstr ri = (NonlocalReturnInstr)instr;
                 IRubyObject rv = (IRubyObject)retrieveOp(ri.getReturnValue(), context, self, currDynScope, currScope, temp);
-                return IRRuntimeHelpers.initiateNonLocalReturn(context, currDynScope, blockType, rv);
+                return IRRuntimeHelpers.initiateNonLocalReturn(context, currDynScope, block, rv);
             }
             case RETURN_OR_RETHROW_SAVED_EXC: {
                 IRubyObject retVal = (IRubyObject) retrieveOp(((ReturnBase) instr).getReturnValue(), context, self, currDynScope, currScope, temp);
@@ -451,7 +461,6 @@ public class InterpreterEngine {
     protected static void processOtherOp(ThreadContext context, Block block, Instr instr, Operation operation, DynamicScope currDynScope,
                                          StaticScope currScope, Object[] temp, IRubyObject self,
                                          double[] floats, long[] fixnums, boolean[] booleans) {
-        Block.Type blockType = block == null ? null : block.type;
         Object result;
         switch(operation) {
             case RECV_SELF:
@@ -485,12 +494,12 @@ public class InterpreterEngine {
             case RUNTIME_HELPER: {
                 RuntimeHelperCall rhc = (RuntimeHelperCall)instr;
                 setResult(temp, currDynScope, rhc.getResult(),
-                        rhc.callHelper(context, currScope, currDynScope, self, temp, blockType));
+                        rhc.callHelper(context, currScope, currDynScope, self, temp, block));
                 break;
             }
 
             case CHECK_FOR_LJE:
-                ((CheckForLJEInstr) instr).check(context, currDynScope, blockType);
+                ((CheckForLJEInstr) instr).check(context, currDynScope, block);
                 break;
 
             case BOX_FLOAT: {
@@ -566,7 +575,7 @@ public class InterpreterEngine {
             temp[((TemporaryLocalVariable)resultVar).offset] = result;
         } else {
             LocalVariable lv = (LocalVariable)resultVar;
-            currDynScope.setValue((IRubyObject) result, lv.getLocation(), lv.getScopeDepth());
+            currDynScope.setValueVoid((IRubyObject) result, lv.getLocation(), lv.getScopeDepth());
         }
     }
 

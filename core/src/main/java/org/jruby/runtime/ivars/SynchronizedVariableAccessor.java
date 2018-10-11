@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -24,10 +24,12 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
+
 package org.jruby.runtime.ivars;
 
 import org.jruby.RubyBasicObject;
 import org.jruby.RubyClass;
+import org.jruby.util.ArraySupport;
 
 /**
  * A VariableAccessor that uses synchronization to ensure the variable table
@@ -101,7 +103,8 @@ public class SynchronizedVariableAccessor extends VariableAccessor {
         Object[] currentTable = self.varTable;
         if (currentTable == null) {
             return createTable(self, realClass);
-        } else if (currentTable.length <= index) {
+        }
+        if (currentTable.length <= index) {
             return growTable(self, realClass, currentTable);
         }
         return currentTable;
@@ -129,7 +132,7 @@ public class SynchronizedVariableAccessor extends VariableAccessor {
      */
     private static Object[] growTable(RubyBasicObject self, RubyClass realClass, Object[] currentTable) {
         Object[] newTable = new Object[realClass.getVariableTableSizeWithExtras()];
-        System.arraycopy(currentTable, 0, newTable, 0, currentTable.length);
+        ArraySupport.copy(currentTable, 0, newTable, 0, currentTable.length);
         return self.varTable = newTable;
     }
 }

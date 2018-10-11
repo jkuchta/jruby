@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -12,7 +12,7 @@
  * rights and limitations under the License.
  *
  * Copyright (C) 2006 MenTaLguY <mental@rydia.net>
- * 
+ *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
  * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
@@ -25,14 +25,16 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
+
 package org.jruby.ext.thread;
 
 import java.util.concurrent.locks.ReentrantLock;
-import org.jruby.CompatVersion;
 import org.jruby.Ruby;
 import org.jruby.RubyBoolean;
 import org.jruby.RubyClass;
 import org.jruby.RubyObject;
+import org.jruby.RubyThread;
+import org.jruby.RubyTime;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.runtime.Block;
@@ -59,7 +61,7 @@ public class Mutex extends RubyObject {
     }
 
     public static void setup(Ruby runtime) {
-        RubyClass cMutex = runtime.defineClass("Mutex", runtime.getObject(), new ObjectAllocator() {
+        RubyClass cMutex = runtime.getThread().defineClassUnder("Mutex", runtime.getObject(), new ObjectAllocator() {
 
             public IRubyObject allocate(Ruby runtime, RubyClass klass) {
                 return new Mutex(runtime, klass);
@@ -67,6 +69,7 @@ public class Mutex extends RubyObject {
         });
         cMutex.setReifiedClass(Mutex.class);
         cMutex.defineAnnotatedMethods(Mutex.class);
+        runtime.getObject().setConstant("Mutex", cMutex);
     }
 
     @JRubyMethod(name = "locked?")
@@ -77,24 +80,20 @@ public class Mutex extends RubyObject {
     @JRubyMethod
     public RubyBoolean try_lock(ThreadContext context) {
         if (lock.isHeldByCurrentThread()) {
-            return context.runtime.getFalse();
+            return context.fals;
         }
         return context.runtime.newBoolean(context.getThread().tryLock(lock));
     }
 
     @JRubyMethod
     public IRubyObject lock(ThreadContext context) {
+        RubyThread thread = context.getThread();
         try {
-            context.getThread().enterSleep();
-            try {
-                checkRelocking(context);
-                context.getThread().lockInterruptibly(lock);
-            } catch (InterruptedException ex) {
-                context.pollThreadEvents();
-                throw context.runtime.newConcurrencyError("interrupted waiting for mutex");
-            }
+            thread.enterSleep();
+            checkRelocking(context);
+            thread.lock(lock);
         } finally {
-            context.getThread().exitSleep();
+            thread.exitSleep();
         }
         return this;
     }
@@ -108,7 +107,7 @@ public class Mutex extends RubyObject {
         if (!lock.isHeldByCurrentThread()) {
             throw runtime.newThreadError("Mutex is not owned by calling thread");
         }
-        
+
         boolean hasQueued = lock.hasQueuedThreads();
         context.getThread().unlock(lock);
         return hasQueued ? context.nil : this;
@@ -130,17 +129,25 @@ public class Mutex extends RubyObject {
 
     @JRubyMethod
     public IRubyObject sleep(ThreadContext context, IRubyObject timeout) {
-        long beg = System.currentTimeMillis();
-        double t = timeout.convertToFloat().getDoubleValue();
-        if (t < 0) throw context.runtime.newArgumentError("negative sleep timeout");
+        final long beg = System.currentTimeMillis();
+        double t = RubyTime.convertTimeInterval(context, timeout);
+
         unlock(context);
+
         try {
-            context.getThread().sleep((long) (t * 1000));
+            long millis = (long) (t * 1000);
+
+            if (Double.compare(t, 0.0d) == 0 || millis == 0) {
+                // wait time is zero or smaller than 1ms, so we just proceed
+            } else {
+                context.getThread().sleep(millis);
+            }
         } catch (InterruptedException ex) {
             // ignore interrupted
         } finally {
             lock(context);
         }
+
         return context.runtime.newFixnum((System.currentTimeMillis() - beg) / 1000);
     }
 
@@ -148,7 +155,7 @@ public class Mutex extends RubyObject {
     public IRubyObject synchronize(ThreadContext context, Block block) {
         lock(context);
         try {
-            return block.yield(context, null);
+            return block.yieldSpecific(context);
         } finally {
             unlock(context);
         }
@@ -164,5 +171,5 @@ public class Mutex extends RubyObject {
             throw context.runtime.newThreadError("Mutex relocking by same thread");
         }
     }
-    
+
 }

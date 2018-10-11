@@ -6,7 +6,7 @@
 #--
 # A note on naming: this is named _ContextState_ rather
 # than _DescribeState_ because +describe+ is the keyword
-# in the DSL for refering to the context in which an example
+# in the DSL for referring to the context in which an example
 # is evaluated, just as +it+ refers to the example itself.
 #++
 class ContextState
@@ -190,7 +190,7 @@ class ContextState
       MSpec.actions :tagged, ex
     end
 
-    not @examples.empty?
+    !@examples.empty?
   end
 
   # Evaluates the examples in a +ContextState+. Invokes the MSpec events
@@ -214,7 +214,7 @@ class ContextState
               if example
                 passed = protect nil, example
                 MSpec.actions :example, state, example
-                protect nil, @expectation_missing unless MSpec.expectation? or not passed
+                protect nil, @expectation_missing unless MSpec.expectation? or !passed
               end
             end
             protect "after :each", post(:each)

@@ -98,8 +98,8 @@ class TestHigherJavasupport < Test::Unit::TestCase
     assert_equal(10.0, Double.new("10").doubleValue())
 
     assert_equal(Random, r.class)
-    assert_equal(Fixnum, r.nextInt.class)
-    assert_equal(Fixnum, r.nextInt(10).class)
+    assert_equal(Integer, r.nextInt.class)
+    assert_equal(Integer, r.nextInt(10).class)
   end
 
   Long = java.lang.Long
@@ -116,7 +116,7 @@ class TestHigherJavasupport < Test::Unit::TestCase
 
   def test_class_methods
     result = java.lang.System.currentTimeMillis()
-    assert_equal(Fixnum, result.class)
+    assert_equal(Integer, result.class)
   end
 
   Boolean = java.lang.Boolean
@@ -454,20 +454,81 @@ class TestHigherJavasupport < Test::Unit::TestCase
     assert_equal [ 2, 1 ], [ [], [ 0 ] ].dimensions
   end
 
-  def test_void
-    assert Java::void
-    assert Java::Void
+  def test_primitives
+    assert_equal 'short', Java::short.java_class.name
+    assert_equal 'double', Java::double.java_class.name
+    assert_equal 'float', Java::float.java_class.name
+    assert Java::float.is_a?(Class)
+    assert Java::byte.is_a?(Class)
+    assert_false Java::org.is_a?(Class)
     begin
-      Java::void[1].new
-      fail "expected to raise"
-    rescue ArgumentError => e
-      assert_equal "Java package 'void' does not have a method `[]' with 1 argument", e.message
+      Class.new(Java::long); fail 'extended a primitive type!'
+    rescue TypeError => e
+      assert(/can not extend .* long/.match(e.message))
     end
-    assert Java::Void == Java::void
-    assert Java::void.equal? Java::Void
+
+    begin
+      Java::double.new; fail "expected to raise"
+    rescue NoMethodError
+    end
+    begin
+      Java::short.synchronized {}; fail "expected to raise"
+    rescue NoMethodError
+    end
+    begin
+      Java::float.java_object; fail "expected to raise"
+    rescue NoMethodError
+    end
+
+    assert Java::byte.hash != Java::float.hash
+    assert_false Java::byte == Java::float
+    assert_true Java::byte == Java::byte
+    assert_true Java::long.eql? Java::long
+    assert_false Java::int.eql? Java::long
+
+    assert_equal 2, Java::short.new_array(2).length
+  end
+
+  def test_void
+    assert Java::void.is_a?(Class)
+    assert_equal 'void', Java::void.java_class.name
+
+    begin
+      Class.new(Java::void); fail 'extended void type!'
+    rescue TypeError => e
+      assert(/can not extend .* void/.match(e.message))
+    end
+
+    # NOTE: Java::Void is simply a package stub -
+    # has nothing to do with java.lang.Void.class just like Java::Float
+    assert Java::Void
+
+    assert Java::Void != Java::void
+    assert_false Java::void.equal? Java::Void
     quiet do
       p Java
       p Java::void
+    end
+
+    begin
+      Java::void.new; fail "expected to raise"
+    rescue NoMethodError
+    end
+    begin
+      Java::void[1].new; fail "expected to raise"
+    rescue NoMethodError
+    end
+    begin
+      Java::void[].new; fail "expected to raise"
+    rescue NoMethodError
+    end
+    begin
+      Java::void.new_array; fail "expected to raise"
+    rescue NoMethodError
+    end
+    begin
+      Java::void.synchronized; fail "expected to raise"
+    rescue NoMethodError
     end
   end
 
@@ -583,7 +644,7 @@ class TestHigherJavasupport < Test::Unit::TestCase
     r_returned = l.get(1)
     # Since Random is a public class we should get the value casted as that
     assert_equal("java.util.Random", r_returned.java_class.name)
-    assert(r_returned.nextInt.kind_of?(Fixnum))
+    assert(r_returned.nextInt.kind_of?(Integer))
   end
 
   HashMap = java.util.HashMap
@@ -653,6 +714,94 @@ class TestHigherJavasupport < Test::Unit::TestCase
 
   def test_make_sure_we_are_not_writing_class_methods_to_the_same_place
     assert_nothing_raised { AlphaSingleton.getInstance.alpha }
+  end
+
+  def test_conflicting_getter_aliasing
+    assert BetaSingleton.instance.respond_to?(:beta)
+    assert BetaSingleton.instance.respond_to?(:beta?)
+    assert BetaSingleton.respond_to?(:betac)
+    assert BetaSingleton.respond_to?(:betac?)
+
+    instance = BetaSingleton.instance
+    assert_equal 'Beta', instance.getBeta
+    assert_equal 'Beta', instance.get_beta
+    assert_equal 'beta', instance.beta
+    assert_equal true,   instance.beta?
+
+    assert_equal 'Beta2', instance.getBeta2
+    assert_equal 'Beta2', instance.get_beta2
+    assert_equal 'Beta2', instance.beta2
+    assert_equal true,   instance.beta2?
+
+    assert_equal 'Beta3', instance.getBeta3
+    assert_equal 'Beta3', instance.get_beta3
+    assert_equal 'Beta3', instance.beta3
+    assert_equal true,   instance.beta3?
+
+    assert_equal 'Beta4', instance.getBeta4
+    assert_equal 'Beta4', instance.get_beta4
+    assert_equal true,    instance.beta4
+
+    assert_equal 'Beta5', instance.getBeta5
+    assert_equal 'Beta5', instance.get_beta5
+    assert_equal true,    instance.beta5(nil)
+
+    assert_equal 'beta6', instance.beta6
+    assert_equal true,    instance.beta6?
+
+    assert_equal nil , instance.beta7
+    assert_equal true, instance.beta7?
+
+    assert_equal 'BetaCased', instance.getBetaCased
+    assert_equal 'BetaCased', instance.get_beta_cased
+    assert_equal 'betaCased', instance.betaCased
+    assert_equal 'betaCased', instance.beta_cased
+    assert_equal true,        instance.beta_cased?
+    assert_equal true,        instance.isBetaCased
+    assert_equal true,        instance.is_beta_cased
+    assert_equal true,        instance.is_beta_cased?
+
+    assert_equal 'BetaCased2', instance.betaCased2
+    assert_equal 'BetaCased2', instance.beta_cased2
+    assert_equal true,         instance.beta_cased2?
+
+    assert_equal 'BetaCased3', instance.betaCased3
+    assert_equal 'BetaCased3', instance.beta_cased3
+    assert_equal true,         instance.beta_cased3?
+
+    #
+
+    assert_equal 'BetaCasedc', instance.class.getBetaCasedc
+    assert_equal 'BetaCasedc', instance.class.get_beta_casedc
+    assert_equal 'betaCasedc', instance.class.betaCasedc
+    assert_equal 'betaCasedc', instance.class.beta_casedc
+    assert_equal true,         instance.class.beta_casedc?
+    assert_equal true,         instance.class.isBetaCasedc
+    assert_equal true,         instance.class.is_beta_casedc?
+
+    assert_equal 'BetaCasedc2', instance.class.betaCasedc2
+    assert_equal 'BetaCasedc2', instance.class.beta_casedc2
+    assert_equal true,          instance.class.beta_casedc2?
+
+    assert_equal 'BetaCasedc3', instance.class.betaCasedc3
+    assert_equal 'BetaCasedc3', instance.class.beta_casedc3
+    assert_equal true,          instance.class.beta_casedc3?
+
+    klass = BetaSingleton
+    assert_equal 'BetaClass', klass.getBetac
+    assert_equal 'BetaClass', klass.get_betac
+    assert_equal 'betaClass', klass.betac
+    assert_equal true,        klass.betac?
+
+    assert_equal 'BetaClass2', klass.betac2
+    assert_equal true,         klass.betac2?
+
+    assert_equal 'BetaClass3', klass.betac3
+    assert_equal true,         klass.betac3?
+
+    assert_equal 'betaClass4', klass.betac4
+    assert_equal 'BetaClass4', klass.get_betac4
+    assert_raises(NoMethodError) { klass.betac4? }
   end
 
   java_import 'org.jruby.javasupport.test.Color'
@@ -916,8 +1065,8 @@ class TestHigherJavasupport < Test::Unit::TestCase
   end
 
   def test_package_object_id
-    assert org.jruby.object_id.is_a?(Fixnum)
-    assert Java::java::lang.object_id.is_a?(Fixnum)
+    assert org.jruby.object_id.is_a?(Integer)
+    assert Java::java::lang.object_id.is_a?(Integer)
   end
 
   def test_package_singleton_method_hooks
@@ -1107,7 +1256,11 @@ class TestHigherJavasupport < Test::Unit::TestCase
       list.get(5)
       assert(false)
     rescue java.lang.IndexOutOfBoundsException => e
-      assert(e.message =~ /Index: 5, Size: 0$/)
+      if JAVA_9
+        assert(e.message =~ /Index 5.*?length 0$/)
+      else
+        assert(e.message =~ /Index: 5, Size: 0$/)
+      end
     end
   end
 
@@ -1223,6 +1376,19 @@ class TestHigherJavasupport < Test::Unit::TestCase
 
   def test_string_from_bytes
     assert_equal('foo', String.from_java_bytes('foo'.to_java_bytes))
+  end
+
+  def test_string_as_charsequence
+    str = 'fo0'.to_java('java.lang.CharSequence')
+    assert_equal 'o'.ord, str.charAt(1)
+    assert_equal 3, str.length
+    assert_equal 'f', str.subSequence(0, 1)
+    assert_equal 'o0', str.subSequence(1, 3)
+    assert 'fo0'.to_java.contentEquals('fo0')
+    assert_java_raises(java.lang.StringIndexOutOfBoundsException) { str.charAt(5) }
+    assert_java_raises(java.lang.StringIndexOutOfBoundsException) { str.charAt(-2) }
+    assert_java_raises(java.lang.StringIndexOutOfBoundsException) { str.subSequence(3, 2) }
+    assert_java_raises(java.lang.StringIndexOutOfBoundsException) { str.subSequence(0, -2) }
   end
 
   # JRUBY-2088
@@ -1400,6 +1566,21 @@ CLASSDEF
     assert(x.java_class.kind_of?Java::JavaClass)
   end
 
+  java_import 'org.jruby.javasupport.test.name.Sample'
+
+  def test_native_ruby_array_java_argument
+    assert_equal '10', Sample.test(16)
+    assert_equal 3, Sample.test([1, 2.0, 3])
+  end
+
+  def test_ruby_object_java_argument
+    assert_equal 'RubyString',  Sample.rubyObj('s')
+    assert_equal 'RubyInteger', Sample.rubyObj(100)
+    assert_equal 'RubyObject',  Sample.rubyObj([1])
+    # undefined territory as nil gets into null early
+    #assert_equal 'RubyObject',  Sample.rubyObj(nil)
+  end
+
   # JRUBY-4524
   class IncludePackageSuper
     def self.const_missing(a)
@@ -1433,6 +1614,91 @@ CLASSDEF
         break if a == 0.0
       end
     end
+  end
+
+  def test_java_numbers_with_array
+    num1 = 0.5; num2 = 111
+    if defined?(JRUBY_VERSION)
+      num1 = java.lang.Float.new(num1)
+      num2 = java.lang.Short.new(num2)
+    end
+    pack = [ num1, num2 ].pack('D')
+    assert_equal "\x00\x00\x00\x00\x00\x00\xE0?".force_encoding('ASCII-8BIT'), pack
+
+    i = java.lang.Integer.new(1)
+    arr = []; arr[i] = 'one'
+    assert_equal 'one', arr.at(i)
+    assert_equal 'one', arr[1]
+    i = java.lang.Long.new(1)
+    assert_equal 'one', arr[i]
+  end
+
+  def test_java_numbers_coercing
+    num1 = 1; num2 = 2
+    if defined?(JRUBY_VERSION)
+      num1 = java.lang.Integer.new(num1)
+      num2 = java.lang.Byte.new(num2)
+    end
+    assert_equal 2, 2 / num1
+    assert_equal 1, 2.div(num2)
+
+    assert_equal 4, 2 * num2
+    big = 1_000_000_000_000_000_000_000_000
+    assert_equal 2 * big, big * num2
+
+    assert_equal 1, 5 % num2
+    assert_equal 0, big % num1
+    assert_equal 100, 10 ** num2
+
+    require 'bigdecimal'
+    dec = BigDecimal('4444.1234')
+    assert_equal BigDecimal('8888.2468'), dec * num2
+    assert_equal BigDecimal('4445.1234'), dec + num1
+  end
+
+  def test_java_numbers_with_rational
+    num1 = 0.5; num2 = 2
+    if defined?(JRUBY_VERSION)
+      num1 = java.lang.Double.new(num1)
+      num2 = java.lang.Integer.new(num2)
+    end
+    half = Rational('1/2')
+    assert_equal 1, half.div(num1)
+    assert_equal Rational('1/4'), half / num2
+  end
+
+  def test_java_numbers_treated_like_ruby_ones
+    i = java.lang.Integer.new(3)
+    assert_equal 3.0, i.to_f
+    assert_equal 3, i.to_i
+    assert_equal true, i.integer?
+
+    assert_equal 4, java.lang.Byte.new(4).to_i
+    assert_equal 5, java.lang.Byte.new(5).to_int
+
+    assert_equal 1, 10.gcd(i)
+
+    i = java.math.BigInteger.new('3')
+    assert_equal 3.0, i.to_f
+    assert_equal 3, i.to_i
+    assert_equal true, i.integer?
+
+    assert_equal 30, 10.lcm(i)
+
+    f = java.lang.Float.new(3)
+    assert_equal 3.0, f.to_f
+    assert_equal 3, f.to_i
+    assert_equal false, f.integer?
+
+    f = java.math.BigDecimal.new('3.0')
+    assert_equal 3.0, f.to_f
+    assert_equal 3, f.to_i
+    assert_equal false, f.integer?
+  end
+
+  def test_java_character_converts_to_i
+    c = '0'.to_java(:char)
+    assert_equal 48, c.to_i
   end
 
   # GH-3262
@@ -1619,22 +1885,33 @@ CLASSDEF
     assert ! output.index('ambiguous'), output
   end
 
-# NOTE: this might be desired to be implemented - except coercion it's all in
-#  def test_java_constructor_with_prefered_match
-#    output = with_stderr_captured do # exact match should not warn :
-#      color = java.awt.Color.new(10, 10, 1.0)
-#      assert_equal 10, color.getRed # assert we called (int,int,int)
-#    end
-#    # warning: ambiguous Java methods found, using java.awt.Color(int,int,int)
-#    assert ! output.index('ambiguous'), output
-#
-#    output = with_stderr_captured do # exact match should not warn :
-#      color = java.awt.Color.new(1.0, 0.1, 1)
-#      assert_equal 255, color.getRed # assert we called (float,float,float)
-#    end
-#    # warning: ambiguous Java methods found, using java.awt.Color(int,int,int)
-#    assert ! output.index('ambiguous'), output
-#  end
+  # NOTE: this might be desired to be implemented - except coercion it's all in
+  def test_java_constructor_with_prefered_match
+    color = nil
+    output = with_stderr_captured do # exact match should not warn :
+      color = java.awt.Color.new(10, 10, java.lang.Short.new(1))
+    end
+    # warning: ambiguous Java methods found, using java.awt.Color(int,int,int)
+    assert ! output.index('ambiguous'), output
+    assert_equal 10, color.getRed # assert we called (int,int,int)
+
+    output = with_stderr_captured do
+      color = java.awt.Color.new(1, 1, 1.0) # (float,float,float)
+    end
+    # warning: ambiguous Java methods found, using java.awt.Color(int,int,int)
+    # TODO should not warn
+    #assert ! output.index('ambiguous'), output
+    assert_equal 255, color.getRed
+
+    output = with_stderr_captured do # exact match should not warn :
+      color = java.awt.Color.new(1.0, 0.1, 1)
+    end
+    # warning: ambiguous Java methods found, using java.awt.Color(int,int,int)
+    # TODO should not warn
+    #assert ! output.index('ambiguous'), output
+    pend('[ji] did not select (float,float,float) ctor') if color.getRed != 255
+    assert_equal 255, color.getRed # assert we called (float,float,float)
+  end
 
   # original report: https://jira.codehaus.org/browse/JRUBY-5582
   # NOTE: we're not testing this "early" on still a good JI exercise

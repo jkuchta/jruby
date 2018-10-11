@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -49,8 +49,6 @@ import java.lang.invoke.MethodHandles;
  */
 public abstract class BlockBody {
 
-    public static final String[] EMPTY_PARAMETER_LIST = org.jruby.util.StringSupport.EMPTY_STRING_ARRAY;
-
     protected final Signature signature;
     protected volatile MethodHandle testBlockBody;
 
@@ -62,7 +60,12 @@ public abstract class BlockBody {
         return signature;
     }
 
+    public EvalType getEvalType()  {
+        return null; // method should be abstract - isn't due compatibility
+    }
+
     public void setEvalType(EvalType evalType) {
+        // NOOP - but "real" block bodies should track their eval-type
     }
 
     public boolean canCallDirect() {
@@ -70,9 +73,10 @@ public abstract class BlockBody {
     }
 
     public MethodHandle getTestBlockBody() {
+        final MethodHandle testBlockBody = this.testBlockBody;
         if (testBlockBody != null) return testBlockBody;
 
-        return testBlockBody = Binder.from(boolean.class, ThreadContext.class, Block.class).drop(0).append(this).invoke(TEST_BLOCK_BODY);
+        return this.testBlockBody = Binder.from(boolean.class, ThreadContext.class, Block.class).drop(0).append(this).invoke(TEST_BLOCK_BODY);
     }
 
     private static final MethodHandle TEST_BLOCK_BODY = Binder.from(boolean.class, Block.class, BlockBody.class).invokeStaticQuiet(MethodHandles.lookup(), BlockBody.class, "testBlockBody");
@@ -269,7 +273,7 @@ public abstract class BlockBody {
             // I thought only procs & lambdas can be called, and blocks are yielded to.
             if (args.length == 1) {
                 // Convert value to arg-array, unwrapping where necessary
-                args = IRRuntimeHelpers.convertValueIntoArgArray(context, args[0], signature.arityValue(), type == Block.Type.NORMAL && args[0] instanceof RubyArray);
+                args = IRRuntimeHelpers.convertValueIntoArgArray(context, args[0], signature, type == Block.Type.NORMAL && args[0] instanceof RubyArray);
             } else if (getSignature().arityValue() == 1 && !getSignature().restKwargs()) {
                 // discard excess arguments
                 args = args.length == 0 ? context.runtime.getSingleNilArray() : new IRubyObject[] { args[0] };

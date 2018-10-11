@@ -1,6 +1,7 @@
 package org.jruby.ir.persistence;
 
 import org.jcodings.Encoding;
+import org.jruby.RubySymbol;
 import org.jruby.ir.IRScope;
 import org.jruby.ir.IRScopeType;
 import org.jruby.ir.Operation;
@@ -22,6 +23,7 @@ public interface IRWriterEncoder {
 
     public void encode(ByteList bytelist);
     public void encode(Encoding encoding);
+    public void encode(RubySymbol value);
     public void encode(String value);
     public void encode(String[] values);
     public void encode(Instr value);
@@ -39,6 +41,7 @@ public interface IRWriterEncoder {
     public void encode(byte value);
     public void encode(char value);
     public void encode(int value);
+    public void encode(int[] value);
     public void encode(long value);
     public void encode(double value);
     public void encode(float value);

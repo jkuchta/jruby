@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -34,6 +34,7 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
+
 package org.jruby.javasupport;
 
 import org.jruby.Ruby;
@@ -43,17 +44,21 @@ import org.jruby.RubyClass;
 import org.jruby.RubyInteger;
 import org.jruby.RubyModule;
 import org.jruby.RubyString;
+import org.jruby.RubySymbol;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
 import org.jruby.exceptions.RaiseException;
+import org.jruby.java.addons.ClassJavaAddons;
 import org.jruby.java.proxies.ArrayJavaProxy;
 import org.jruby.java.proxies.ConcreteJavaProxy;
+import org.jruby.java.proxies.JavaProxy;
 import org.jruby.java.util.ArrayUtils;
 import org.jruby.runtime.Helpers;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.util.ByteList;
+import org.jruby.util.CodegenUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -63,10 +68,9 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.util.List;
-import org.jruby.util.CodegenUtils;
 
 import static org.jruby.RubyModule.undefinedMethodMessage;
+import static org.jruby.util.RubyStringBuilder.ids;
 
 @JRubyClass(name="Java::JavaClass", parent="Java::JavaObject", include = "Comparable")
 public class JavaClass extends JavaObject {
@@ -140,49 +144,129 @@ public class JavaClass extends JavaObject {
         // JavaClass? Do we want them to do that? Can you Class.new(JavaClass)? Should you be able to?
         // NOTE: NOT_ALLOCATABLE_ALLOCATOR is probably OK here, since we don't intend for people to monkey with
         // this type and it can't be marshalled. Confirm. JRUBY-415
-        RubyClass JavaCLass = Java.defineClassUnder("JavaClass", JavaObject, ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR);
+        RubyClass JavaClass = Java.defineClassUnder("JavaClass", JavaObject, ObjectAllocator.NOT_ALLOCATABLE_ALLOCATOR);
 
-        JavaCLass.includeModule(runtime.getModule("Comparable"));
+        JavaClass.includeModule(runtime.getModule("Comparable"));
 
-        JavaCLass.defineAnnotatedMethods(JavaClass.class);
+        JavaClass.defineAnnotatedMethods(JavaClass.class);
 
-        JavaCLass.getMetaClass().undefineMethod("new");
-        JavaCLass.getMetaClass().undefineMethod("allocate");
+        JavaClass.getMetaClass().undefineMethod("new");
+        JavaClass.getMetaClass().undefineMethod("allocate");
 
-        return JavaCLass;
+        return JavaClass;
     }
 
     public final Class javaClass() {
         return (Class<?>) getValue();
     }
 
+    /**
+     * Get the associated JavaClass for a proxy module.
+     *
+     * The passed module/class is assumed to be a Java proxy module/class!
+     * @param context
+     * @param proxy
+     * @return class
+     */
     public static Class<?> getJavaClass(final ThreadContext context, final RubyModule proxy) {
-        final IRubyObject javaClass = Helpers.invoke(context, proxy, "java_class");
-        return ((JavaClass) javaClass).javaClass();
+        return ((JavaClass) java_class(context, proxy)).javaClass();
     }
 
+    /**
+     * Retieve a JavaClass if the passed module/class is a Java proxy.
+     * @param context
+     * @param proxy
+     * @return class or null if not a Java proxy
+     *
+     * @note Class objects have a java_class method but they're not considered Java proxies!
+     */
     public static Class<?> getJavaClassIfProxy(final ThreadContext context, final RubyModule proxy) {
-        final IRubyObject javaClass;
-        try {
-            javaClass = Helpers.invoke(context, proxy, "java_class");
+        JavaClass javaClass = getJavaClassIfProxyImpl(context, proxy);
+        return javaClass == null ? null : javaClass.javaClass();
+    }
+
+    private static JavaClass getJavaClassIfProxyImpl(final ThreadContext context, final RubyModule proxy) {
+        final IRubyObject java_class = java_class(context, proxy);
+        return ( java_class instanceof JavaClass ) ? (JavaClass) java_class : null;
+    }
+
+    // expected to handle Java proxy (Ruby) sub-classes as well
+    public static boolean isProxyType(final ThreadContext context, final RubyModule proxy) {
+        return getJavaClassIfProxyImpl(context, proxy) != null;
+        //IRubyObject java_class = proxy.getInstanceVariable("@java_class");
+        //return (java_class != null && java_class.isTrue()) ||
+        //        proxy.respondsTo("java_class"); // not all proxy types have @java_class set
+    }
+
+    /**
+     * Returns the (reified or proxied) Java class if the passed Ruby module/class has one.
+     * @param context
+     * @param type
+     * @return Java proxy class, Java reified class or nil
+     */
+    public static IRubyObject java_class(final ThreadContext context, final RubyModule type) {
+        IRubyObject java_class = type.getInstanceVariable("@java_class");
+        if ( java_class == null ) { // || java_class.isNil()
+            if ( type.respondsTo("java_class") ) { // NOTE: quite bad since built-in Ruby classes will return
+                // a Ruby Java proxy for java.lang.Class while Java proxies will return a JavaClass instance !
+                java_class = Helpers.invoke(context, type, "java_class");
+            }
+            else java_class = context.nil; // we return != null (just like callMethod would)
         }
-        catch (RuntimeException e) {
-            // clear $! since our "java_class" invoke above may have failed and set it
-            context.setErrorInfo(context.nil);
+        return java_class;
+    }
+
+    /*
+    public static Class<?> getJavaClass(final ThreadContext context, final RubyModule type) {
+        IRubyObject java_class = java_class(context, type);
+        if ( java_class == context.nil ) return null;
+        return resolveClassType(context, java_class).javaClass();
+    } */
+
+    /**
+     * Resolves a Java class from a passed type parameter.
+     *
+     * Uisng the rules accepted by `to_java(type)` in Ruby land.
+     * @param context
+     * @param type
+     * @return resolved type or null if resolution failed
+     */
+    public static JavaClass resolveType(final ThreadContext context, final IRubyObject type) {
+        if (type instanceof RubyString || type instanceof RubySymbol) {
+            final Ruby runtime = context.runtime;
+            final String className = type.toString();
+            JavaClass targetType = runtime.getJavaSupport().getNameClassMap().get(className);
+            if ( targetType == null ) targetType = JavaClass.forNameVerbose(runtime, className);
+            return targetType;
+        }
+        return resolveClassType(context, type);
+    }
+
+    // this should handle the type returned from Class#java_class
+    private static JavaClass resolveClassType(final ThreadContext context, final IRubyObject type) {
+        if (type instanceof JavaProxy) { // due Class#java_class wrapping
+            final Object wrapped = ((JavaProxy) type).getObject();
+            if ( wrapped instanceof Class ) return JavaClass.get(context.runtime, (Class) wrapped);
             return null;
         }
-        return ( javaClass instanceof JavaClass ) ? ((JavaClass) javaClass).javaClass() : null;
+        if (type instanceof JavaClass) {
+            return (JavaClass) type;
+        }
+        if (type instanceof RubyModule) { // assuming a proxy module/class e.g. to_java(java.lang.String)
+            return getJavaClassIfProxyImpl(context, (RubyModule) type);
+        }
+        return null;
     }
 
     static boolean isPrimitiveName(final String name) {
-        return JavaUtil.PRIMITIVE_CLASSES.containsKey(name);
+        return JavaUtil.getPrimitiveClass(name) != null;
     }
 
     public static JavaClass forNameVerbose(Ruby runtime, String className) {
         Class<?> klass = null; // "boolean".length() == 7
         if (className.length() < 8 && Character.isLowerCase(className.charAt(0))) {
             // one word type name that starts lower-case...it may be a primitive type
-            klass = JavaUtil.PRIMITIVE_CLASSES.get(className);
+            klass = JavaUtil.getPrimitiveClass(className);
         }
         synchronized (JavaClass.class) {
             if (klass == null) {
@@ -201,7 +285,11 @@ public class JavaClass extends JavaObject {
 
     @JRubyMethod(name = "for_name", required = 1, meta = true)
     public static JavaClass for_name(IRubyObject recv, IRubyObject name) {
-        return forNameVerbose(recv.getRuntime(), name.asJavaString());
+        return for_name(recv, name.asJavaString());
+    }
+
+    static JavaClass for_name(IRubyObject recv, String name) {
+        return forNameVerbose(recv.getRuntime(), name);
     }
 
     @JRubyMethod
@@ -552,7 +640,7 @@ public class JavaClass extends JavaObject {
             return new JavaMethod(runtime, method);
         }
         catch (NoSuchMethodException e) {
-            throw runtime.newNameError(undefinedMethodMessage(methodName, javaClass().getName(), false), methodName);
+            throw runtime.newNameError(undefinedMethodMessage(runtime, ids(runtime, methodName), ids(runtime, javaClass().getName()), false), methodName);
         }
     }
 
@@ -569,7 +657,7 @@ public class JavaClass extends JavaObject {
             return new JavaMethod(runtime, method);
         }
         catch (NoSuchMethodException e) {
-            throw runtime.newNameError(undefinedMethodMessage(methodName, javaClass().getName(), false), methodName);
+            throw runtime.newNameError(undefinedMethodMessage(runtime, ids(runtime, methodName), ids(runtime, javaClass().getName()), false), methodName);
         }
     }
 
@@ -586,7 +674,7 @@ public class JavaClass extends JavaObject {
 
         if ( callable != null ) return callable;
 
-        throw runtime.newNameError(undefinedMethodMessage(methodName, javaClass().getName(), false), methodName);
+        throw runtime.newNameError(undefinedMethodMessage(runtime, ids(runtime, methodName), ids(runtime, javaClass().getName()), false), methodName);
     }
 
     public static JavaCallable getMatchingCallable(Ruby runtime, Class<?> javaClass, String methodName, Class<?>[] argumentTypes) {
@@ -820,7 +908,7 @@ public class JavaClass extends JavaObject {
                 ArrayUtils.setWithExceptionHandlingDirect(runtime, newArray, i, nestedArray);
             }
         } else {
-            ArrayUtils.copyDataToJavaArrayDirect(context, fromArray, newArray);
+            ArrayUtils.copyDataToJavaArrayDirect(fromArray, newArray);
         }
 
         return newArray;

@@ -1,5 +1,5 @@
-require File.expand_path('../../../spec_helper', __FILE__)
-require File.expand_path('../fixtures/classes.rb', __FILE__)
+require_relative '../../spec_helper'
+require_relative 'fixtures/classes'
 
 describe "IO#pid" do
   before :each do
@@ -17,7 +17,7 @@ end
 
 describe "IO#pid" do
   before :each do
-    @io = IO.popen RUBY_EXE, "r+"
+    @io = IO.popen ruby_cmd('STDIN.read'), "r+"
   end
 
   after :each do

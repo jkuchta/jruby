@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -26,6 +26,7 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
+
 package org.jruby.anno;
 
 import java.lang.annotation.Annotation;
@@ -57,22 +58,28 @@ public abstract class MethodDescriptor<T> {
     protected abstract int parameterCount(T methodObject);
     protected abstract String parameterAsString(T methodObject, int index);
 
+//    protected abstract <A extends Annotation> A getAnnotation(Class<A> annotationType);
+//    protected abstract int getModifiers();
+//    protected abstract String getDeclaringClassName();
+//    protected abstract String getSimpleName();
+//    protected abstract boolean hasContext();
+//    protected abstract boolean hasBlock();
+//    protected abstract int parameterCount();
+//    protected abstract String parameterAsString(int index);
+
     public MethodDescriptor(T methodObject) {
         anno = getAnnotation(methodObject, JRubyMethod.class);
         modifiers = getModifiers(methodObject);
         declaringClassName = getDeclaringClassName(methodObject);
         declaringClassPath = declaringClassName.replace('.', '/');
         name = getSimpleName(methodObject);
-        if (anno.name() != null && anno.name().length > 0) {
-            rubyName = anno.name()[0];
-        } else {
-            rubyName = name;
-        }
+        final String[] names = anno.name();
+        rubyName = (names != null && names.length > 0) ? names[0] : name;
         isStatic = Modifier.isStatic(modifiers);
         hasContext = hasContext(methodObject);
         hasBlock = hasBlock(methodObject);
 
-        int parameterCount = parameterCount(methodObject);
+        final int parameterCount = parameterCount(methodObject);
         if (hasContext) {
             if (isStatic && (parameterCount < 2 || !parameterAsString(methodObject, 1).equals("org.jruby.runtime.builtin.IRubyObject"))) {
                 throw new RuntimeException("static method without self argument: " + methodObject);
@@ -138,5 +145,27 @@ public abstract class MethodDescriptor<T> {
 
         int arityRequired = Math.max(required, actualRequired);
         arity = (optional > 0 || rest) ? -(arityRequired + 1) : arityRequired;
+    }
+
+    public final static int MAX_REQUIRED_UNBOXED_ARITY = 3;
+
+    /**
+     * Returns a value useful for number of arguments we need for arity when generating call methods used by
+     * invokers and the JIT.  Note: MAX_REQUIRED_UNBOXED_ARITY looks like some tweakable setting but it is merely
+     * for documentation.  All our non-generated internal code is also locked to the same specific arities so we
+     * cannot just change this value and be happy.
+     *
+     * @return arity value of specific required arity which can be used as an unboxed call or -1 for all other cases.
+     */
+    public int calculateSpecificCallArity() {
+        if (optional == 0 && !rest) {
+            if (required == 0) {
+                if (actualRequired <= MAX_REQUIRED_UNBOXED_ARITY) return actualRequired;
+            } else if (required >= 0 && required <= MAX_REQUIRED_UNBOXED_ARITY) {
+                return required;
+            }
+        }
+
+        return -1;
     }
 }

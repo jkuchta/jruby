@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -27,24 +27,29 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
+
 package org.jruby.runtime;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
+import org.jruby.RubyInstanceConfig;
+import org.jruby.anno.FrameField;
 import org.jruby.runtime.callsite.LtCallSite;
 import org.jruby.runtime.callsite.LeCallSite;
 import org.jruby.runtime.callsite.MinusCallSite;
+import org.jruby.runtime.callsite.ModCallSite;
 import org.jruby.runtime.callsite.MulCallSite;
 import org.jruby.runtime.callsite.NormalCachingCallSite;
 import org.jruby.runtime.callsite.GtCallSite;
 import org.jruby.runtime.callsite.PlusCallSite;
 import org.jruby.runtime.callsite.GeCallSite;
-import org.jruby.RubyInstanceConfig;
 import org.jruby.runtime.callsite.CmpCallSite;
 import org.jruby.runtime.callsite.EqCallSite;
 import org.jruby.runtime.callsite.BitAndCallSite;
@@ -57,8 +62,12 @@ import org.jruby.runtime.callsite.SuperCallSite;
 import org.jruby.runtime.callsite.VariableCachingCallSite;
 import org.jruby.runtime.callsite.XorCallSite;
 import org.jruby.runtime.invokedynamic.MethodNames;
+import org.jruby.util.StringSupport;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
+
+import static java.util.stream.Collectors.toSet;
+import static java.util.stream.Stream.concat;
 
 /**
  *
@@ -94,6 +103,9 @@ public class MethodIndex {
     public static final Set<String> FRAME_AWARE_METHODS = Collections.synchronizedSet(new HashSet<String>());
     public static final Set<String> SCOPE_AWARE_METHODS = Collections.synchronizedSet(new HashSet<String>());
 
+    public static final Map<String, Set<FrameField>> METHOD_FRAME_READS = new ConcurrentHashMap<>();
+    public static final Map<String, Set<FrameField>> METHOD_FRAME_WRITES = new ConcurrentHashMap<>();
+
     public static CallSite getCallSite(String name) {
         // fast and safe respond_to? call site logic
         if (name.equals("respond_to?")) return new RespondToCallSite();
@@ -105,42 +117,45 @@ public class MethodIndex {
         return new NormalCachingCallSite(name);
     }
 
-    private static final Map<String, String> FIXNUM_OPS = new HashMap<String, String>();
-    private static final String[][] fastFixnumOps = {
-        {"+", "op_plus"},
-        {"-", "op_minus"},
-        {"*", "op_mul"},
-        {"==", "op_equal"},
-        {"<", "op_lt"},
-        {"<=", "op_le"},
-        {">", "op_gt"},
-        {">=", "op_ge"},
-        {"<=>", "op_cmp"},
-        {"&", "op_and"},
-        {"|", "op_or"},
-        {"^", "op_xor"},
-        {">>", "op_rshift"},
-        {"<<", "op_lshift"}
-    };
+    private static final Map<String, String> FIXNUM_OPS;
 
     static {
+        String[][] fastFixnumOps = {
+                {"+", "op_plus"},
+                {"-", "op_minus"},
+                {"*", "op_mul"},
+                {"%", "op_mod"},
+                {"==", "op_equal"},
+                {"<", "op_lt"},
+                {"<=", "op_le"},
+                {">", "op_gt"},
+                {">=", "op_ge"},
+                {"<=>", "op_cmp"},
+                {"&", "op_and"},
+                {"|", "op_or"},
+                {"^", "op_xor"},
+                {">>", "op_rshift"},
+                {"<<", "op_lshift"}
+        };
+        FIXNUM_OPS = new HashMap<>(fastFixnumOps.length + 1, 1);
         for (String[] fastOp : fastFixnumOps) FIXNUM_OPS.put(fastOp[0], fastOp[1]);
     }
 
-    private static final Map<String, String> FLOAT_OPS = new HashMap<String, String>();
-    private static final String[][] fastFloatOps = {
-        {"+", "op_plus"},
-        {"-", "op_minus"},
-        {"*", "op_mul"},
-        {"==", "op_equal"},
-        {"<", "op_lt"},
-        {"<=", "op_le"},
-        {">", "op_gt"},
-        {">=", "op_ge"},
-        {"<=>", "op_cmp"}
-    };
+    private static final Map<String, String> FLOAT_OPS;
 
     static {
+        final String[][] fastFloatOps = {
+                {"+", "op_plus"},
+                {"-", "op_minus"},
+                {"*", "op_mul"},
+                {"==", "op_equal"},
+                {"<", "op_lt"},
+                {"<=", "op_le"},
+                {">", "op_gt"},
+                {">=", "op_ge"},
+                {"<=>", "op_cmp"}
+        };
+        FLOAT_OPS = new HashMap<>(fastFloatOps.length + 1, 1);
         for (String[] fastOp : fastFloatOps) FLOAT_OPS.put(fastOp[0], fastOp[1]);
     }
 
@@ -153,36 +168,23 @@ public class MethodIndex {
     }
 
     public static CallSite getFastFixnumOpsCallSite(String name) {
-        if (name.equals("+")) {
-            return new PlusCallSite();
-        } else if (name.equals("-")) {
-            return new MinusCallSite();
-        } else if (name.equals("*")) {
-            return new MulCallSite();
-        } else if (name.equals("<")) {
-            return new LtCallSite();
-        } else if (name.equals("<=")) {
-            return new LeCallSite();
-        } else if (name.equals(">")) {
-            return new GtCallSite();
-        } else if (name.equals(">=")) {
-            return new GeCallSite();
-        } else if (name.equals("==")) {
-            return new EqCallSite();
-        } else if (name.equals("<=>")) {
-            return new CmpCallSite();
-        } else if (name.equals("&")) {
-            return new BitAndCallSite();
-        } else if (name.equals("|")) {
-            return new BitOrCallSite();
-        } else if (name.equals("^")) {
-            return new XorCallSite();
-        } else if (name.equals(">>")) {
-            return new ShiftRightCallSite();
-        } else if (name.equals("<<")) {
-            return new ShiftLeftCallSite();
+        switch (name) {
+            case "+" : return new PlusCallSite();
+            case "-" : return new MinusCallSite();
+            case "*" : return new MulCallSite();
+            case "%" : return new ModCallSite();
+            case "<" : return new LtCallSite();
+            case "<=" : return new LeCallSite();
+            case ">" : return new GtCallSite();
+            case ">=" : return new GeCallSite();
+            case "==" : return new EqCallSite();
+            case "<=>" : return new CmpCallSite();
+            case "&" : return new BitAndCallSite();
+            case "|" : return new BitOrCallSite();
+            case "^" : return new XorCallSite();
+            case ">>" : return new ShiftRightCallSite();
+            case "<<" : return new ShiftLeftCallSite();
         }
-
         return new NormalCachingCallSite(name);
     }
 
@@ -230,11 +232,59 @@ public class MethodIndex {
         return new SuperCallSite();
     }
 
+    public static void addMethodReadFieldsPacked(int readBits, String methodsPacked) {
+        processFrameFields(readBits, methodsPacked, "read", METHOD_FRAME_READS);
+    }
+
+    public static void addMethodWriteFieldsPacked(int writeBits, String methodsPacked) {
+        processFrameFields(writeBits, methodsPacked, "write", METHOD_FRAME_WRITES);
+    }
+
+    private static void processFrameFields(int bits, String methodNames, String usage, Map<String, Set<FrameField>> methodFrameAccesses) {
+        Set<FrameField> writes = FrameField.unpack(bits);
+
+        boolean needsFrame = FrameField.needsFrame(bits);
+        boolean needsScope = FrameField.needsScope(bits);
+
+        if (DEBUG) LOG.debug("Adding method fields for {}: {} for {}", usage, writes, methodNames);
+
+        if (writes.size() > 0) {
+            List<String> names = StringSupport.split(methodNames, ';');
+
+            addAwareness(needsFrame, needsScope, names);
+
+            addFieldAccesses(methodFrameAccesses, names, writes);
+        }
+    }
+
+    private static void addFieldAccesses(Map<String, Set<FrameField>> methodFrameWrites, List<String> names, Set<FrameField> writes) {
+        for (String name : names) {
+            methodFrameWrites.compute(
+                    name,
+                    (key, cur) -> cur == null ? writes : concat(cur.stream(), writes.stream()).collect(toSet()));
+        }
+    }
+
+    private static void addAwareness(boolean needsFrame, boolean needsScope, List<String> names) {
+        if (needsFrame) FRAME_AWARE_METHODS.addAll(names);
+        if (needsScope) SCOPE_AWARE_METHODS.addAll(names);
+    }
+
+    public static void addMethodReadFields(String name, FrameField[] reads) {
+        addMethodReadFieldsPacked(FrameField.pack(reads), name);
+    }
+
+    public static void addMethodWriteFields(String name, FrameField[] write) {
+        addMethodWriteFieldsPacked(FrameField.pack(write), name);
+    }
+
+    @Deprecated
     public static void addFrameAwareMethods(String... methods) {
         if (DEBUG) LOG.debug("Adding frame-aware method names: {}", Arrays.toString(methods));
         FRAME_AWARE_METHODS.addAll(Arrays.asList(methods));
     }
 
+    @Deprecated
     public static void addScopeAwareMethods(String... methods) {
         if (DEBUG) LOG.debug("Adding scope-aware method names: {}", Arrays.toString(methods));
         SCOPE_AWARE_METHODS.addAll(Arrays.asList(methods));

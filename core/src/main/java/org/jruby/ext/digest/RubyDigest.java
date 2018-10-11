@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -29,6 +29,7 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
+
 package org.jruby.ext.digest;
 
 import java.security.MessageDigest;
@@ -54,6 +55,7 @@ import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
+import org.jruby.util.ArraySupport;
 import org.jruby.util.ByteList;
 import org.jruby.util.log.Logger;
 import org.jruby.util.log.LoggerFactory;
@@ -284,7 +286,7 @@ public class RubyDigest {
         /* instance methods that may be overridden */
         @JRubyMethod(name = "==", required = 1)
         public static IRubyObject op_equal(ThreadContext context, IRubyObject self, IRubyObject oth) {
-            if(oth.isNil()) return context.runtime.getFalse();
+            if(oth.isNil()) return context.fals;
 
             RubyString str1, str2;
             RubyModule instance = (RubyModule)context.runtime.getModule("Digest").getConstantAt("Instance");
@@ -296,7 +298,7 @@ public class RubyDigest {
                 str2 = oth.convertToString();
             }
             boolean ret = str1.bytesize().eql(str2.bytesize()) && (str1.eql(str2));
-            return ret ? context.runtime.getTrue() : context.runtime.getFalse();
+            return ret ? context.tru : context.fals;
         }
 
         @JRubyMethod()
@@ -375,14 +377,13 @@ public class RubyDigest {
 
         @JRubyMethod(name = "digest", required = 1, rest = true, meta = true)
         public static IRubyObject s_digest(ThreadContext context, IRubyObject recv, IRubyObject[] args, Block unusedBlock) {
-            Ruby runtime = recv.getRuntime();
+            final Ruby runtime = context.runtime;
             if (args.length < 1) {
                 throw runtime.newArgumentError("no data given");
             }
             RubyString str = args[0].convertToString();
-            IRubyObject[] newArgs = new IRubyObject[args.length - 1];
-            System.arraycopy(args, 1, newArgs, 0, args.length - 1);
-            IRubyObject obj = ((RubyClass)recv).newInstance(context, newArgs, Block.NULL_BLOCK);
+            args = ArraySupport.newCopy(args, 1, args.length - 1); // skip first arg
+            IRubyObject obj = ((RubyClass) recv).newInstance(context, args, Block.NULL_BLOCK);
             return obj.callMethod(context, "digest", str);
         }
 

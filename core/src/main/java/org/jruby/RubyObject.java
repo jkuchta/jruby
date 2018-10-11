@@ -1,11 +1,11 @@
 /*
  ***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -37,19 +37,23 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
+
 package org.jruby;
 
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import org.jcodings.Encoding;
 import org.jruby.anno.JRubyClass;
-import org.jruby.runtime.Helpers;
 import org.jruby.runtime.Block;
 import org.jruby.runtime.ClassIndex;
+import org.jruby.runtime.JavaSites;
+import org.jruby.runtime.JavaSites.ObjectSites;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
 import org.jruby.runtime.builtin.IRubyObject;
@@ -59,8 +63,9 @@ import static org.jruby.runtime.Helpers.invokedynamic;
 import static org.jruby.runtime.invokedynamic.MethodNames.EQL;
 import static org.jruby.runtime.invokedynamic.MethodNames.OP_EQUAL;
 import static org.jruby.runtime.invokedynamic.MethodNames.HASH;
+
+import org.jruby.specialized.RubyObjectSpecializer;
 import org.jruby.util.cli.Options;
-import org.jruby.util.io.EncodingUtils;
 
 /**
  * RubyObject represents the implementation of the Object class in Ruby. As such,
@@ -142,104 +147,6 @@ public class RubyObject extends RubyBasicObject {
         }
     };
 
-    public static final ObjectAllocator OBJECT_VAR0_ALLOCATOR = new ObjectAllocator() {
-        @Override
-        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new RubyObjectVar0(runtime, klass);
-        }
-    };
-
-    public static final ObjectAllocator OBJECT_VAR1_ALLOCATOR = new ObjectAllocator() {
-        @Override
-        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new RubyObjectVar1(runtime, klass);
-        }
-    };
-
-    public static final ObjectAllocator OBJECT_VAR2_ALLOCATOR = new ObjectAllocator() {
-        @Override
-        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new RubyObjectVar2(runtime, klass);
-        }
-    };
-
-    public static final ObjectAllocator OBJECT_VAR3_ALLOCATOR = new ObjectAllocator() {
-        @Override
-        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new RubyObjectVar3(runtime, klass);
-        }
-    };
-
-    public static final ObjectAllocator OBJECT_VAR4_ALLOCATOR = new ObjectAllocator() {
-        @Override
-        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new RubyObjectVar4(runtime, klass);
-        }
-    };
-
-    public static final ObjectAllocator OBJECT_VAR5_ALLOCATOR = new ObjectAllocator() {
-        @Override
-        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new RubyObjectVar5(runtime, klass);
-        }
-    };
-
-    public static final ObjectAllocator OBJECT_VAR6_ALLOCATOR = new ObjectAllocator() {
-        @Override
-        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new RubyObjectVar6(runtime, klass);
-        }
-    };
-
-    public static final ObjectAllocator OBJECT_VAR7_ALLOCATOR = new ObjectAllocator() {
-        @Override
-        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new RubyObjectVar7(runtime, klass);
-        }
-    };
-
-    public static final ObjectAllocator OBJECT_VAR8_ALLOCATOR = new ObjectAllocator() {
-        @Override
-        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new RubyObjectVar8(runtime, klass);
-        }
-    };
-
-    public static final ObjectAllocator OBJECT_VAR9_ALLOCATOR = new ObjectAllocator() {
-        @Override
-        public IRubyObject allocate(Ruby runtime, RubyClass klass) {
-            return new RubyObjectVar9(runtime, klass);
-        }
-    };
-
-    public static final ObjectAllocator[] FIELD_ALLOCATORS = {
-        OBJECT_ALLOCATOR,
-        OBJECT_VAR0_ALLOCATOR,
-        OBJECT_VAR1_ALLOCATOR,
-        OBJECT_VAR2_ALLOCATOR,
-        OBJECT_VAR3_ALLOCATOR,
-        OBJECT_VAR4_ALLOCATOR,
-        OBJECT_VAR5_ALLOCATOR,
-        OBJECT_VAR6_ALLOCATOR,
-        OBJECT_VAR7_ALLOCATOR,
-        OBJECT_VAR8_ALLOCATOR,
-        OBJECT_VAR9_ALLOCATOR
-    };
-
-    public static final Class[] FIELD_ALLOCATED_CLASSES = {
-        RubyObject.class,
-        RubyObjectVar0.class,
-        RubyObjectVar1.class,
-        RubyObjectVar2.class,
-        RubyObjectVar3.class,
-        RubyObjectVar4.class,
-        RubyObjectVar5.class,
-        RubyObjectVar6.class,
-        RubyObjectVar7.class,
-        RubyObjectVar8.class,
-        RubyObjectVar9.class,
-    };
-
     /**
      * Allocator that inspects all methods for instance variables and chooses
      * a concrete class to construct based on that. This allows using
@@ -255,17 +162,7 @@ public class RubyObject extends RubyBasicObject {
                 System.err.println(klass + ";" + foundVariables);
             }
 
-            int count = 0;
-            for (String name : foundVariables) {
-                klass.getVariableTableManager().getVariableAccessorForVar(name, count);
-                count++;
-                if (count >= 10) break;
-            }
-
-            ObjectAllocator allocator = FIELD_ALLOCATORS[count];
-            Class reified = FIELD_ALLOCATED_CLASSES[count];
-            klass.setAllocator(allocator);
-            klass.setReifiedClass(reified);
+            ObjectAllocator allocator = RubyObjectSpecializer.specializeForVariables(klass, foundVariables);
 
             // invalidate metaclass so new allocator is picked up for specialized .new
             klass.getMetaClass().invalidateCacheDescendants();
@@ -307,6 +204,7 @@ public class RubyObject extends RubyBasicObject {
 
     /**
      * Simple helper to print any objects.
+     * @deprecated no longer used - uses Java's System.out
      */
     public static void puts(Object obj) {
         System.out.println(obj.toString());
@@ -326,67 +224,82 @@ public class RubyObject extends RubyBasicObject {
 
     /**
      * The default toString method is just a wrapper that calls the
+     * Ruby "to_s" method.  This will raise if it is not actually a Ruby String.
+     *
+     * @param context thread context this is executing on.
+     * @return the string.
+     */
+    public RubyString toRubyString(ThreadContext context) {
+        return sites(context).to_s.call(context, this, this).convertToString();
+    }
+
+    /**
+     * The default toString method is just a wrapper that calls the
      * Ruby "to_s" method.
      */
     @Override
     public String toString() {
-        RubyString rubyString = Helpers.invoke(getRuntime().getCurrentContext(), this, "to_s").convertToString();
-        return rubyString.getUnicodeValue();
+        return toRubyString(getRuntime().getCurrentContext()).getUnicodeValue();
     }
 
     /**
      * Call the Ruby initialize method with the supplied arguments and block.
      */
     public final void callInit(IRubyObject[] args, Block block) {
-        Helpers.invoke(getRuntime().getCurrentContext(), this, "initialize", args, block);
+        ThreadContext context = getRuntime().getCurrentContext();
+        metaClass.getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, args, block);
     }
 
     /**
      * Call the Ruby initialize method with the supplied arguments and block.
      */
     public final void callInit(Block block) {
-        Helpers.invoke(getRuntime().getCurrentContext(), this, "initialize", block);
+        ThreadContext context = getRuntime().getCurrentContext();
+        metaClass.getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, block);
     }
 
     /**
      * Call the Ruby initialize method with the supplied arguments and block.
      */
     public final void callInit(IRubyObject arg0, Block block) {
-        Helpers.invoke(getRuntime().getCurrentContext(), this, "initialize", arg0, block);
+        ThreadContext context = getRuntime().getCurrentContext();
+        metaClass.getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, arg0, block);
     }
 
     /**
      * Call the Ruby initialize method with the supplied arguments and block.
      */
     public final void callInit(IRubyObject arg0, IRubyObject arg1, Block block) {
-        Helpers.invoke(getRuntime().getCurrentContext(), this, "initialize", arg0, arg1, block);
+        ThreadContext context = getRuntime().getCurrentContext();
+        metaClass.getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, arg0, arg1, block);
     }
 
     /**
      * Call the Ruby initialize method with the supplied arguments and block.
      */
     public final void callInit(IRubyObject arg0, IRubyObject arg1, IRubyObject arg2, Block block) {
-        Helpers.invoke(getRuntime().getCurrentContext(), this, "initialize", arg0, arg1, arg2, block);
+        ThreadContext context = getRuntime().getCurrentContext();
+        metaClass.getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, arg0, arg1, arg2, block);
     }
 
     public final void callInit(ThreadContext context, IRubyObject[] args, Block block) {
-        getMetaClass().getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, args, block);
+        metaClass.getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, args, block);
     }
 
     public final void callInit(ThreadContext context, Block block) {
-        getMetaClass().getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, block);
+        metaClass.getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, block);
     }
 
     public final void callInit(ThreadContext context, IRubyObject arg0, Block block) {
-        getMetaClass().getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, arg0, block);
+        metaClass.getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, arg0, block);
     }
 
     public final void callInit(ThreadContext context, IRubyObject arg0, IRubyObject arg1, Block block) {
-        getMetaClass().getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, arg0, arg1, block);
+        metaClass.getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, arg0, arg1, block);
     }
 
     public final void callInit(ThreadContext context, IRubyObject arg0, IRubyObject arg1, IRubyObject arg2, Block block) {
-        getMetaClass().getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, arg0, arg1, arg2, block);
+        metaClass.getBaseCallSite(RubyClass.CS_IDX_INITIALIZE).call(context, this, this, arg0, arg1, arg2, block);
     }
 
     /**
@@ -466,18 +379,20 @@ public class RubyObject extends RubyBasicObject {
      * Helper method for checking equality, first using Java identity
      * equality, and then calling the "==" method.
      */
-    protected static boolean equalInternal(final ThreadContext context, final IRubyObject a, final IRubyObject b){
-        if (a == b) {
-            return true;
-        } else if (a instanceof RubySymbol) {
-            return false;
-        } else if (a instanceof RubyFixnum && b instanceof RubyFixnum) {
-            return ((RubyFixnum)a).fastEqual((RubyFixnum) b);
-        } else if (a instanceof RubyFloat && b instanceof RubyFloat) {
-            return ((RubyFloat)a).fastEqual((RubyFloat)b);
-        } else {
-            return invokedynamic(context, a, OP_EQUAL, b).isTrue();
+    public static boolean equalInternal(final ThreadContext context, final IRubyObject a, final IRubyObject b) {
+        if (a == b) return true;
+        if (a instanceof RubySymbol) return false;
+
+        return fastNumEqualInternal(context, a, b);
+    }
+
+    private static boolean fastNumEqualInternal(final ThreadContext context, final IRubyObject a, final IRubyObject b) {
+        if (a instanceof RubyFixnum) {
+            if (b instanceof RubyFixnum) return ((RubyFixnum) a).fastEqual((RubyFixnum) b);
+        } else if (a instanceof RubyFloat) {
+            if (b instanceof RubyFloat) return ((RubyFloat) a).fastEqual((RubyFloat) b);
         }
+        return invokedynamic(context, a, OP_EQUAL, b).isTrue();
     }
 
     /**
@@ -485,16 +400,13 @@ public class RubyObject extends RubyBasicObject {
      * equality, and then calling the "eql?" method.
      */
     protected static boolean eqlInternal(final ThreadContext context, final IRubyObject a, final IRubyObject b){
-        if (a == b) {
-            return true;
-        } else if (a instanceof RubySymbol) {
-            return false;
-        } else if (a instanceof RubyNumeric) {
+        if (a == b) return true;
+        if (a instanceof RubySymbol) return false;
+        if (a instanceof RubyNumeric) {
             if (a.getClass() != b.getClass()) return false;
-            return equalInternal(context, a, b);
-        } else {
-            return invokedynamic(context, a, EQL, b).isTrue();
+            return fastNumEqualInternal(context, a, b);
         }
+        return invokedynamic(context, a, EQL, b).isTrue();
     }
 
     /**
@@ -513,7 +425,7 @@ public class RubyObject extends RubyBasicObject {
      *
      * The internal helper that ensures a RubyString instance is returned
      * so dangerous casting can be omitted
-     * Prefered over callMethod(context, "inspect")
+     * Preferred over callMethod(context, "inspect")
      */
     public static RubyString inspect(ThreadContext context, IRubyObject object) {
         return (RubyString)rbInspect(context, object);
@@ -522,35 +434,37 @@ public class RubyObject extends RubyBasicObject {
     // MRI: rb_obj_dig
     public static IRubyObject dig(ThreadContext context, IRubyObject obj, IRubyObject[] args, int idx) {
         if ( obj.isNil() ) return context.nil;
+
+        ObjectSites sites = sites(context);
+
         if ( obj instanceof RubyArray ) {
-            // TODO: cache somewhere
-            if (obj.getMetaClass().searchMethod("dig").isBuiltin()) {
+            if (sites.dig_array.isBuiltin(obj.getMetaClass())) {
                 return ((RubyArray) obj).dig(context, args, idx);
             }
         }
         if ( obj instanceof RubyHash ) {
-            // TODO: cache somewhere
-            if (obj.getMetaClass().searchMethod("dig").isBuiltin()) {
+            if (sites.dig_hash.isBuiltin(obj.getMetaClass())) {
                 return ((RubyHash) obj).dig(context, args, idx);
             }
         }
         if ( obj instanceof RubyStruct ) {
-            // TODO: cache somewhere
-            if (obj.getMetaClass().searchMethod("dig").isBuiltin()) {
+            if (sites.dig_struct.isBuiltin(obj.getMetaClass())) {
                 return ((RubyStruct) obj).dig(context, args, idx);
             }
         }
-        if ( obj.respondsTo("dig") ) {
+        if (sites.respond_to_dig.respondsTo(context, obj, obj, true) ) {
             final int len = args.length - idx;
             switch ( len ) {
                 case 1:
-                    return obj.callMethod(context, "dig", args[idx]);
+                    return sites.dig_misc.call(context, obj, obj, args[idx]);
                 case 2:
-                    return obj.callMethod(context, "dig", new IRubyObject[] { args[idx], args[idx+1] });
+                    return sites.dig_misc.call(context, obj, obj, args[idx], args[idx+1]);
+                case 3:
+                    return sites.dig_misc.call(context, obj, obj, args[idx], args[idx+1], args[idx+2]);
                 default:
                     IRubyObject[] rest = new IRubyObject[len];
                     System.arraycopy(args, idx, rest, 0, len);
-                    return obj.callMethod(context, "dig", rest);
+                    return sites.dig_misc.call(context, obj, obj, rest);
             }
         }
         throw context.runtime.newTypeError(obj.getMetaClass().getName() + " does not have #dig method");
@@ -585,6 +499,10 @@ public class RubyObject extends RubyBasicObject {
         for (int i = 0; i < ivarCount; i++) {
             setInstanceVariable((String)in.readObject(), (IRubyObject)in.readObject());
         }
+    }
+
+    private static ObjectSites sites(ThreadContext context) {
+        return context.sites.Object;
     }
 
 }

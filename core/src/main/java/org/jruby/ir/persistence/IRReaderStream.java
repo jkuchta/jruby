@@ -9,6 +9,7 @@ package org.jruby.ir.persistence;
 import org.jcodings.Encoding;
 import org.jcodings.EncodingDB;
 import org.jruby.RubyInstanceConfig;
+import org.jruby.RubySymbol;
 import org.jruby.ir.IRManager;
 import org.jruby.ir.IRScope;
 import org.jruby.ir.IRScopeType;
@@ -112,8 +113,24 @@ public class IRReaderStream implements IRReaderDecoder, IRPersistenceValues {
     }
 
     @Override
+    public Label[] decodeLabelArray() {
+        int size = decodeInt();
+        Label[] labels = new Label[size];
+        for (int i = 0; i < size; i++) {
+            labels[i] = decodeLabel();
+        }
+
+        return labels;
+    }
+
+    @Override
     public RubyEvent decodeRubyEvent() {
         return RubyEvent.fromOrdinal(decodeInt());
+    }
+
+    @Override
+    public RubySymbol decodeSymbol() {
+        return currentScope.getManager().getRuntime().newSymbol(decodeByteList());
     }
 
     @Override
@@ -135,6 +152,7 @@ public class IRReaderStream implements IRReaderDecoder, IRPersistenceValues {
     @Override
     public void addScope(IRScope scope) {
         scopes.add(scope);
+        currentScope = scope;
     }
 
     @Override
@@ -150,6 +168,16 @@ public class IRReaderStream implements IRReaderDecoder, IRPersistenceValues {
             array[i] = decodeString();
         }
         return array;
+    }
+
+    @Override
+    public int[] decodeIntArray() {
+        int size = decodeInt();
+        int[] ints = new int[size];
+        for (int i = 0; i < size; i++) {
+            ints[i] = decodeInt();
+        }
+        return ints;
     }
 
     private Map<String, Operand> vars = null;
@@ -192,10 +220,10 @@ public class IRReaderStream implements IRReaderDecoder, IRPersistenceValues {
             case ATTR_ASSIGN: return AttrAssignInstr.decode(this);
             case B_FALSE: return BFalseInstr.decode(this);
             case B_NIL: return BNilInstr.decode(this);
+            case B_SWITCH: return BSwitchInstr.decode(this);
             case B_TRUE: return BTrueInstr.decode(this);
             case B_UNDEF: return BUndefInstr.decode(this);
             case BACKTICK_STRING: return BacktickInstr.decode(this);
-            case BEQ: return BEQInstr.decode(this);
             case BINDING_LOAD: return LoadLocalVarInstr.decode(this);
             case BINDING_STORE: return StoreLocalVarInstr.decode(this);
             case BLOCK_GIVEN: return BlockGivenInstr.decode(this);
@@ -436,6 +464,7 @@ public class IRReaderStream implements IRReaderDecoder, IRPersistenceValues {
             case AS_STRING: return AsString.decode(this);
             case BIGNUM: return Bignum.decode(this);
             case BOOLEAN: return org.jruby.ir.operands.Boolean.decode(this);
+            case COMPLEX: return Complex.decode(this);
             case CURRENT_SCOPE: return CurrentScope.decode(this);
             case DYNAMIC_SYMBOL: return DynamicSymbol.decode(this);
             case FILENAME: return Filename.decode(this);
@@ -451,6 +480,7 @@ public class IRReaderStream implements IRReaderDecoder, IRPersistenceValues {
             case NTH_REF: return NthRef.decode(this);
             case NULL_BLOCK: return NullBlock.decode(this);
             case OBJECT_CLASS: return new ObjectClass();
+            case RATIONAL: return Rational.decode(this);
             case REGEXP: return Regexp.decode(this);
             case SCOPE_MODULE: return ScopeModule.decode(this);
             case SELF: return Self.SELF;

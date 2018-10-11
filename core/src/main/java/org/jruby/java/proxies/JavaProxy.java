@@ -112,14 +112,14 @@ public class JavaProxy extends RubyObject {
     }
 
     static JavaClass java_class(final ThreadContext context, final RubyModule module) {
-        return (JavaClass) Helpers.invoke(context, module, "java_class");
+        return (JavaClass) JavaClass.java_class(context, module);
     }
 
     @JRubyMethod(meta = true, frame = true) // framed for invokeSuper
     public static IRubyObject inherited(ThreadContext context, IRubyObject recv, IRubyObject subclass) {
-        IRubyObject subJavaClass = Helpers.invoke(context, subclass, "java_class");
+        IRubyObject subJavaClass = JavaClass.java_class(context, (RubyClass) subclass);
         if (subJavaClass.isNil()) {
-            subJavaClass = Helpers.invoke(context, recv, "java_class");
+            subJavaClass = JavaClass.java_class(context, (RubyClass) recv);
             Helpers.invoke(context, subclass, "java_class=", subJavaClass);
         }
         return Helpers.invokeSuper(context, recv, subclass, Block.NULL_BLOCK);
@@ -213,38 +213,52 @@ public class JavaProxy extends RubyObject {
             final Map.Entry<String,String> entry = iter.next();
             if ( entry.getKey().equals( fieldName ) ) {
 
-                if ( Ruby.isSecurityRestricted() && ! Modifier.isPublic(field.getModifiers()) ) {
-                    throw context.runtime.newSecurityError("Cannot change accessibility on fields in a restricted mode: field '" + fieldName + "'");
-                }
+                installField(context, entry.getValue(), field, module, asReader, asWriter);
 
-                String asName = entry.getValue();
-
-                if ( Modifier.isStatic(field.getModifiers()) ) {
-                    if ( asReader ) {
-                        module.getSingletonClass().addMethod(asName, new StaticFieldGetter(fieldName, module, field));
-                    }
-                    if ( asWriter ) {
-                        if ( Modifier.isFinal(field.getModifiers()) ) {
-                            throw context.runtime.newSecurityError("Cannot change final field '" + fieldName + "'");
-                        }
-                        module.getSingletonClass().addMethod(asName + '=', new StaticFieldSetter(fieldName, module, field));
-                    }
-                } else {
-                    if ( asReader ) {
-                        module.addMethod(asName, new InstanceFieldGetter(fieldName, module, field));
-                    }
-                    if ( asWriter ) {
-                        if ( Modifier.isFinal(field.getModifiers()) ) {
-                            throw context.runtime.newSecurityError("Cannot change final field '" + fieldName + "'");
-                        }
-                        module.addMethod(asName + '=', new InstanceFieldSetter(fieldName, module, field));
-                    }
-                }
-
-                iter.remove();
-                break;
+                iter.remove(); break;
             }
         }
+    }
+
+    private static void installField(final ThreadContext context,
+        final String asName, final Field field, final RubyModule target,
+        boolean asReader, Boolean asWriter) {
+
+        if ( Ruby.isSecurityRestricted() && ! Modifier.isPublic(field.getModifiers()) ) {
+            throw context.runtime.newSecurityError("Cannot change accessibility on field in restricted mode  '" + field + "'");
+        }
+
+        final String fieldName = field.getName();
+
+        if ( Modifier.isStatic(field.getModifiers()) ) {
+            if ( asReader ) {
+                target.getSingletonClass().addMethod(asName, new StaticFieldGetter(fieldName, target, field));
+            }
+            if ( asWriter == null || asWriter ) {
+                if ( Modifier.isFinal(field.getModifiers()) ) {
+                    if ( asWriter == null ) return;
+                    // e.g. Cannot change final field 'private final char[] java.lang.String.value'
+                    throw context.runtime.newSecurityError("Cannot change final field '" + field + "'");
+                }
+                target.getSingletonClass().addMethod(asName + '=', new StaticFieldSetter(fieldName, target, field));
+            }
+        } else {
+            if ( asReader ) {
+                target.addMethod(asName, new InstanceFieldGetter(fieldName, target, field));
+            }
+            if ( asWriter == null || asWriter ) {
+                if ( Modifier.isFinal(field.getModifiers()) ) {
+                    if ( asWriter == null ) return;
+                    throw context.runtime.newSecurityError("Cannot change final field '" + field + "'");
+                }
+                target.addMethod(asName + '=', new InstanceFieldSetter(fieldName, target, field));
+            }
+        }
+    }
+
+    public static void installField(final ThreadContext context,
+        final String asName, final Field field, final RubyModule target) {
+        installField(context, asName, field, target, true, null);
     }
 
     private static void findFields(final ThreadContext context,
@@ -265,8 +279,7 @@ public class JavaProxy extends RubyObject {
 
         // We could not find all of them print out first one (we could print them all?)
         if ( ! fieldMap.isEmpty() ) {
-            throw JavaClass.undefinedFieldError(context.runtime,
-                    topModule.getName(), fieldMap.keySet().iterator().next());
+            throw JavaClass.undefinedFieldError(context.runtime, topModule.getName(), fieldMap.keySet().iterator().next());
         }
 
     }
@@ -296,7 +309,7 @@ public class JavaProxy extends RubyObject {
             boolean equal = getObject() == ((JavaProxy) other).getObject();
             return context.runtime.newBoolean(equal);
         }
-        return context.runtime.getFalse();
+        return context.fals;
     }
 
     @JRubyMethod
@@ -432,9 +445,9 @@ public class JavaProxy extends RubyObject {
 
     private MethodInvoker getMethodInvoker(Method method) {
         if (Modifier.isStatic(method.getModifiers())) {
-            return new StaticMethodInvoker(metaClass.getMetaClass(), method);
+            return new StaticMethodInvoker(metaClass.getMetaClass(), method, method.getName());
         } else {
-            return new InstanceMethodInvoker(metaClass, method);
+            return new InstanceMethodInvoker(metaClass, method, method.getName());
         }
     }
 
@@ -449,12 +462,12 @@ public class JavaProxy extends RubyObject {
 
     @Override
     @SuppressWarnings("unchecked")
-    public Object toJava(final Class type) {
+    public <T> T toJava(Class<T> type) {
         final Object object = getObject();
         final Class<?> clazz = object.getClass();
 
-        if ( type.isAssignableFrom(clazz) ) return object;
-        if ( type.isAssignableFrom(getClass()) ) return this; // e.g. IRubyObject.class
+        if ( type.isAssignableFrom(clazz) ) return type.cast(object);
+        if ( type.isAssignableFrom(getClass()) ) return type.cast(this); // e.g. IRubyObject.class
 
         throw getRuntime().newTypeError("failed to coerce " + clazz.getName() + " to " + type.getName());
     }
@@ -610,12 +623,12 @@ public class JavaProxy extends RubyObject {
             final MethodInvoker invoker;
 
             if ( Modifier.isStatic( method.getModifiers() ) ) {
-                invoker = new StaticMethodInvoker(proxyClass.getMetaClass(), method);
+                invoker = new StaticMethodInvoker(proxyClass.getMetaClass(), method, newNameStr);
                 // add alias to meta
                 proxyClass.getSingletonClass().addMethod(newNameStr, invoker);
             }
             else {
-                invoker = new InstanceMethodInvoker(proxyClass, method);
+                invoker = new InstanceMethodInvoker(proxyClass, method, newNameStr);
                 proxyClass.addMethod(newNameStr, invoker);
             }
 
@@ -633,11 +646,11 @@ public class JavaProxy extends RubyObject {
             final String prettyName = name + CodegenUtils.prettyParams(argTypesClasses);
 
             if ( Modifier.isStatic( method.getModifiers() ) ) {
-                MethodInvoker invoker = new StaticMethodInvoker(proxyClass, method);
+                MethodInvoker invoker = new StaticMethodInvoker(proxyClass, method, name);
                 return RubyMethod.newMethod(proxyClass, prettyName, proxyClass, name, invoker, clazz);
             }
 
-            MethodInvoker invoker = new InstanceMethodInvoker(proxyClass, method);
+            MethodInvoker invoker = new InstanceMethodInvoker(proxyClass, method, name);
             return RubyUnboundMethod.newUnboundMethod(proxyClass, prettyName, proxyClass, name, invoker);
         }
 

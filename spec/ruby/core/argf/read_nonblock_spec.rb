@@ -1,5 +1,5 @@
-require File.expand_path('../../../spec_helper', __FILE__)
-require File.expand_path('../shared/read', __FILE__)
+require_relative '../../spec_helper'
+require_relative 'shared/read'
 
 platform_is_not :windows do
   describe 'ARGF.read_nonblock' do
@@ -49,19 +49,31 @@ platform_is_not :windows do
       stdin.should == @chunk1
     end
 
-    it 'raises IO::EAGAINWaitReadable when STDIN is empty' do
-      input = 'ARGF.read_nonblock(4) rescue print $!.class'
-      stdin = IO.popen([RUBY_EXE, '-e', input], "r+", &:read)
+    context "with STDIN" do
+      before do
+        @r, @w = IO.pipe
+        @stdin = $stdin
+        $stdin = @r
+      end
 
-      stdin.should == 'IO::EAGAINWaitReadable'
-    end
+      after do
+        $stdin = @stdin
+        @w.close
+        @r.close unless @r.closed?
+      end
 
-    ruby_version_is "2.3" do
+      it 'raises IO::EAGAINWaitReadable when empty' do
+        argf ['-'] do
+          lambda {
+            @argf.read_nonblock(4)
+          }.should raise_error(IO::EAGAINWaitReadable)
+        end
+      end
+
       it 'returns :wait_readable when the :exception is set to false' do
-        input = 'p ARGF.read_nonblock(4, nil, exception: false)'
-        stdin = IO.popen([RUBY_EXE, '-e', input], "r+", &:read)
-
-        stdin.strip.should == ':wait_readable'
+        argf ['-'] do
+          @argf.read_nonblock(4, nil, exception: false).should == :wait_readable
+        end
       end
     end
   end

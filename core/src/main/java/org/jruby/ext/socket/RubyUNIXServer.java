@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -25,16 +25,17 @@
  * the provisions above, a recipient may use your version of this file under
  * the terms of any one of the EPL, the GPL or the LGPL.
  ***** END LICENSE BLOCK *****/
+
 package org.jruby.ext.socket;
 
 
 import jnr.unixsocket.UnixServerSocketChannel;
+import jnr.unixsocket.UnixSocketAddress;
 import jnr.unixsocket.UnixSocketChannel;
 import org.jruby.Ruby;
 import org.jruby.RubyClass;
 import org.jruby.anno.JRubyClass;
 import org.jruby.anno.JRubyMethod;
-import org.jruby.ast.util.ArgsUtil;
 import org.jruby.runtime.Helpers;
 import org.jruby.runtime.ObjectAllocator;
 import org.jruby.runtime.ThreadContext;
@@ -42,6 +43,7 @@ import org.jruby.runtime.Visibility;
 import org.jruby.runtime.builtin.IRubyObject;
 
 import java.io.IOException;
+import java.net.SocketAddress;
 import java.nio.channels.SelectableChannel;
 import java.nio.channels.SelectionKey;
 
@@ -107,12 +109,8 @@ public class RubyUNIXServer extends RubyUNIXSocket {
     }
 
     @JRubyMethod
-    public IRubyObject accept_nonblock(ThreadContext context, IRubyObject _opts) {
-        Ruby runtime = context.runtime;
-
-        boolean exception = ArgsUtil.extractKeywordArg(context, "exception", _opts) != runtime.getFalse();
-
-        return accept_nonblock(context, runtime, exception);
+    public IRubyObject accept_nonblock(ThreadContext context, IRubyObject opts) {
+        return accept_nonblock(context, context.runtime, extractExceptionArg(context, opts));
     }
 
     public IRubyObject accept_nonblock(ThreadContext context, Ruby runtime, boolean ex) {
@@ -126,6 +124,11 @@ public class RubyUNIXServer extends RubyUNIXSocket {
 
                 try {
                     UnixSocketChannel socketChannel = ((UnixServerSocketChannel) selectable).accept();
+
+                    if (socketChannel == null) {
+                        if (!ex) return runtime.newSymbol("wait_readable");
+                        throw runtime.newErrnoEAGAINReadableError("accept(2) would block");
+                    }
 
                     RubyUNIXSocket sock = (RubyUNIXSocket)(Helpers.invoke(context, runtime.getClass("UNIXSocket"), "allocate"));
 
@@ -156,7 +159,8 @@ public class RubyUNIXServer extends RubyUNIXSocket {
 
     @JRubyMethod
     public IRubyObject sysaccept(ThreadContext context) {
-        return accept(context);
+        RubyUNIXSocket socket = (RubyUNIXSocket) accept(context);
+        return context.runtime.newFixnum(((UnixSocketChannel) socket.getChannel()).getFD());
     }
 
     @JRubyMethod
@@ -176,6 +180,20 @@ public class RubyUNIXServer extends RubyUNIXSocket {
     @JRubyMethod
     public IRubyObject peeraddr(ThreadContext context) {
         throw context.runtime.newErrnoENOTCONNError();
+    }
+
+    @Override
+    protected UnixSocketAddress getUnixSocketAddress() {
+        SocketAddress socketAddress = ((UnixServerSocketChannel)getChannel()).getLocalSocketAddress();
+        if (socketAddress instanceof UnixSocketAddress) return (UnixSocketAddress) socketAddress;
+        return null;
+    }
+
+    @Override
+    protected UnixSocketAddress getUnixRemoteSocket() {
+        SocketAddress socketAddress = ((UnixServerSocketChannel)getChannel()).getLocalSocketAddress();
+        if (socketAddress instanceof UnixSocketAddress) return (UnixSocketAddress) socketAddress;
+        return null;
     }
 
     private UnixServerSocketChannel asUnixServer() {

@@ -1,3 +1,2 @@
-fails:UDPSocket.send sends data in ad hoc mode
-fails:UDPSocket.send sends data in ad hoc mode (with port given as a String)
-fails:UDPSocket.send sends data in connection mode
+fails(hangs):UDPSocket#send using IPv4 using a connected socket with an explicit destination address sends the data to the given address instead
+fails(hangs):UDPSocket#send using IPv6 using a connected socket with an explicit destination address sends the data to the given address instead

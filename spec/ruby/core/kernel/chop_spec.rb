@@ -1,6 +1,6 @@
 # -*- encoding: utf-8 -*-
-require File.expand_path('../../../spec_helper', __FILE__)
-require File.expand_path('../fixtures/classes', __FILE__)
+require_relative '../../spec_helper'
+require_relative 'fixtures/classes'
 
 describe :kernel_chop, shared: true do
   it "removes the final character of $_" do
@@ -22,7 +22,7 @@ describe "Kernel.chop" do
   it_behaves_like :kernel_chop, "Kernel.chop"
 end
 
-describe "#chop" do
+describe "Kernel#chop" do
   it_behaves_like :kernel_chop_private, :chop
 
   it_behaves_like :kernel_chop, "chop"
@@ -41,7 +41,7 @@ with_feature :encoding do
 
     it "removes the final multi-byte character from $_" do
       script = fixture __FILE__, "#{@method}.rb"
-      KernelSpecs.encoded_chop(script).should == "あ"
+      KernelSpecs.run_with_dash_n(script).should == "あ"
     end
   end
 

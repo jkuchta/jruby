@@ -1,10 +1,10 @@
 /***** BEGIN LICENSE BLOCK *****
- * Version: EPL 1.0/GPL 2.0/LGPL 2.1
+ * Version: EPL 2.0/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Eclipse Public
- * License Version 1.0 (the "License"); you may not use this file
+ * License Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of
- * the License at http://www.eclipse.org/legal/epl-v10.html
+ * the License at http://www.eclipse.org/legal/epl-v20.html
  *
  * Software distributed under the License is distributed on an "AS
  * IS" basis, WITHOUT WARRANTY OF ANY KIND, either express or
@@ -82,6 +82,9 @@ public abstract class Platform {
         if (osname.startsWith("windows")) {
             return WINDOWS;
         }
+        if (osname.startsWith("sunos")) {
+            return SOLARIS;
+        }
         return osname;
     }
     private static String initArchitecture() {
@@ -108,6 +111,7 @@ public abstract class Platform {
     public static final String ARCH = initArchitecture();
     public static final String OS = initOperatingSystem();
     public static final String JVM = getProperty("java.vm.name", "unknown");
+    public static final String OS_VERSION = getProperty("os.version", "unknown");
 
     public static final boolean IS_WINDOWS = OS.equals(WINDOWS);
 
@@ -115,6 +119,7 @@ public abstract class Platform {
     public static final boolean IS_FREEBSD = OS.equals(FREEBSD);
     public static final boolean IS_OPENBSD = OS.equals(OPENBSD);
     public static final boolean IS_LINUX = OS.equals(LINUX);
+    public static final boolean IS_WSL = IS_LINUX && OS_VERSION.contains("Microsoft");
     public static final boolean IS_SOLARIS = OS.equals(SOLARIS);
     public static final boolean IS_BSD = IS_MAC || IS_FREEBSD || IS_OPENBSD;
     public static final boolean IS_OPENVMS = OS.equals(OPENVMS);
